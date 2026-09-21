@@ -1,0 +1,618 @@
+"""The configuration page a display serves for itself.
+
+Point a phone at ``http://<display>:8080/`` and you can change which club, range
+and firing point it is showing, without a keyboard and without an SSH session.
+Changes go through the same file the display watches, so the screen follows
+within a couple of seconds.
+
+The API is small and deliberately dull:
+
+===============================  ======================================
+``GET  /api/status``             what this display is showing right now
+``GET  /api/config``             the stored configuration
+``PUT  /api/config``             merge a partial update and adopt it
+``GET  /api/hosts``              clubs currently streaming
+``GET  /api/ranges?host=``       that club's live ranges
+``GET  /api/lanes?host=&range=`` the firing points on a range
+``POST /api/identify``           make this screen announce itself
+``GET  /healthz``                liveness, for a watchdog
+===============================  ======================================
+
+Writes require the ``X-Megalink-Token`` header when a token is configured. With
+no token set the API is open, which suits a closed range network -- and is why
+there are no permissive CORS headers here: a fleet dashboard talks to this from
+its own server rather than from a browser page.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from typing import Any
+
+from .client import MegalinkError
+from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path
+from .controller import Controller
+from .fleet import PAGE as FLEET_PAGE
+from .fleet import Routes as FleetRoutes
+from .httpbase import DRAIN_LIMIT, BodyTooLarge, JSONHandler, Server
+
+#: Discovery answers are cached for this long. The live host list changes on the
+#: order of minutes, and a dropdown should not put a Pi Zero on the network for
+#: every keystroke.
+CACHE_SECONDS = 20.0
+
+#: A club badge is small. This is generous and still bounds what a display will
+#: read into memory.
+MAX_LOGO_BYTES = 4 * 1024 * 1024
+
+
+def _image_kind(raw: bytes) -> str | None:
+    """The suffix for an image Tk can display, from its leading bytes."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    return None
+
+
+class _Cache:
+    """A tiny time-based cache, so browsing the dropdowns stays cheap."""
+
+    def __init__(self, seconds: float = CACHE_SECONDS) -> None:
+        self._seconds = seconds
+        self._entries: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str, produce: Any) -> Any:
+        now = time.monotonic()
+        with self._lock:
+            found = self._entries.get(key)
+            if found is not None and now - found[0] < self._seconds:
+                return found[1]
+        value = produce()
+        with self._lock:
+            self._entries[key] = (now, value)
+        return value
+
+
+def _peer_count(fleet: Any) -> int:
+    """How many displays this one can currently see, itself included."""
+    return len(fleet.listener.displays()) if fleet is not None else 0
+
+
+def make_handler(
+    controller: Controller,
+    cache: _Cache | None = None,
+    listener: Any = None,
+) -> type[JSONHandler]:
+    """Build a request handler bound to one display.
+
+    Given a beacon ``listener``, the display also serves the fleet dashboard at
+    ``/fleet``: every display on the range hears every other one already, so
+    each is capable of managing the lot and there is no separate service to run.
+    """
+    shared = cache if cache is not None else _Cache()
+    fleet = FleetRoutes(listener, controller.config.web.token) if listener is not None else None
+
+    class Handler(JSONHandler):
+        page = PAGE
+
+        # -- authorisation -------------------------------------------------
+
+        def _authorise(self) -> None:
+            token = controller.config.web.token
+            if not token:
+                return
+            supplied = self.headers.get("X-Megalink-Token") or self.query.get("token") or ""
+            if supplied != token:
+                raise PermissionError("a valid X-Megalink-Token is required")
+
+        # -- discovery -----------------------------------------------------
+
+        def _hosts(self) -> Any:
+            def produce() -> Any:
+                active = controller.client.active()
+                return [
+                    {
+                        "host": host,
+                        "name": entries[0].host_name if entries else host,
+                        "ranges": [
+                            {"key": r.key, "name": r.name, "event": r.event} for r in entries
+                        ],
+                    }
+                    for host, entries in sorted(active.items())
+                ]
+
+            return shared.get("hosts", produce)
+
+        def _ranges(self, host: str) -> Any:
+            def produce() -> Any:
+                return [
+                    {"key": r.key, "name": r.name, "protocol": r.protocol, "event": r.event}
+                    for r in controller.client.ranges(host)
+                ]
+
+            return shared.get(f"ranges:{host}", produce)
+
+        def _lanes(self, host: str, range_name: str) -> Any:
+            def produce() -> Any:
+                source = controller.client.resolve(host, range_name)
+                return controller.client.source_lanes(source)
+
+            return shared.get(f"lanes:{host}:{range_name}", produce)
+
+        # -- the logo ------------------------------------------------------
+
+        def _send_file(self, path: Any) -> None:
+            body = path.read_bytes()
+            self._send(
+                200, body, LOGO_SUFFIXES.get(path.suffix.lower(), "application/octet-stream")
+            )
+
+        def _store_logo(self) -> Any:
+            """Save an uploaded picture beside the configuration.
+
+            PNG and GIF only, because those are what Tk can display without a
+            third-party imaging library, and this package has no dependencies.
+            The format is taken from the bytes rather than from the request:
+            a content type is a claim, and the file has to be one Tk can read.
+            """
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError as exc:
+                raise ValueError("bad Content-Length") from exc
+            if length <= 0:
+                raise ValueError("no image was sent")
+            if length > MAX_LOGO_BYTES:
+                self._drain(min(length, DRAIN_LIMIT))
+                raise BodyTooLarge(
+                    f"the image is too large ({length} bytes; the limit is {MAX_LOGO_BYTES})"
+                )
+            raw = self.rfile.read(length)
+            suffix = _image_kind(raw)
+            if suffix is None:
+                raise ValueError("only PNG and GIF images can be shown")
+
+            target = logo_path(controller.path, suffix)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Remove the other format, so exactly one logo is ever in place.
+            for other in LOGO_SUFFIXES:
+                if other != suffix:
+                    stale = logo_path(controller.path, other)
+                    if stale.is_file():
+                        stale.unlink()
+            temporary = target.with_suffix(target.suffix + ".part")
+            temporary.write_bytes(raw)
+            temporary.replace(target)
+            return {"stored": target.name, "bytes": len(raw)}
+
+        # -- routing -------------------------------------------------------
+
+        def _fleet(self, routes: FleetRoutes, method: str, path: str) -> tuple[int, Any] | None:
+            """The dashboard, mounted under ``/fleet``.
+
+            Changing other displays needs the same token as changing this one:
+            a display is no less worth protecting because the request arrived
+            by way of its neighbour.
+            """
+            if path == "/fleet":
+                if method not in ("GET", "HEAD"):
+                    return 405, {"error": "method not allowed"}
+                self.send_html(200, FLEET_PAGE)
+                return None
+            if path == "/api/fleet/displays":
+                return routes.displays()
+            if path == "/api/fleet/apply" and method == "POST":
+                self._authorise()
+                return routes.apply(self.read_json())
+            if path == "/api/fleet/identify" and method == "POST":
+                self._authorise()
+                return routes.identify(self.read_json())
+            return None
+
+        def route(self, method: str) -> tuple[int, Any] | None:
+            path = self.route_path
+
+            if fleet is not None:
+                answer = self._fleet(fleet, method, path)
+                if answer is not None:
+                    return answer
+
+            if path == "/healthz":
+                return 200, {"ok": True, "name": controller.config.name}
+
+            if path == "/api/status":
+                return 200, controller.status()
+
+            if path == "/api/peers":
+                # Whether this display can see the others, whether or not the
+                # dashboard is being served. Useful on its own for diagnosis.
+                return 200, {"fleet": fleet is not None, "count": _peer_count(fleet)}
+
+            if path == "/api/config":
+                if method in ("GET", "HEAD"):
+                    return 200, controller.config.public_dict()
+                if method in ("PUT", "POST"):
+                    self._authorise()
+                    patch = self.read_json()
+                    try:
+                        updated = controller.config.merged(patch)
+                    except ConfigError as exc:
+                        raise ValueError(str(exc)) from exc
+                    controller.write(updated)
+                    return 200, {
+                        "config": controller.config.public_dict(),
+                        "status": controller.status(),
+                    }
+                return 405, {"error": "method not allowed"}
+
+            if path == "/api/logo":
+                if method in ("GET", "HEAD"):
+                    found = find_logo(controller.config, controller.path)
+                    if found is None:
+                        return 404, {"error": "no logo has been uploaded"}
+                    self._send_file(found)
+                    return None
+                if method == "PUT":
+                    self._authorise()
+                    return 200, self._store_logo()
+                if method == "DELETE":
+                    self._authorise()
+                    removed = []
+                    for suffix in LOGO_SUFFIXES:
+                        candidate = logo_path(controller.path, suffix)
+                        if candidate.is_file():
+                            candidate.unlink()
+                            removed.append(candidate.name)
+                    if controller.config.display.logo:
+                        controller.write(controller.config.merged({"display": {"logo": ""}}))
+                    return 200, {"removed": removed}
+                return 405, {"error": "method not allowed"}
+
+            if path == "/api/identify" and method == "POST":
+                self._authorise()
+                controller.identify()
+                return 200, {"identifying": True}
+
+            if path == "/api/hosts":
+                try:
+                    return 200, {"hosts": self._hosts()}
+                except MegalinkError as exc:
+                    return 502, {"error": str(exc)}
+
+            if path == "/api/ranges":
+                host = self.query.get("host") or controller.config.host
+                if not host:
+                    raise ValueError("a host is required")
+                try:
+                    return 200, {"host": host, "ranges": self._ranges(host)}
+                except MegalinkError as exc:
+                    return 502, {"error": str(exc)}
+
+            if path == "/api/lanes":
+                host = self.query.get("host") or controller.config.host
+                range_name = self.query.get("range") or controller.config.range
+                if not host:
+                    raise ValueError("a host is required")
+                try:
+                    return 200, {"lanes": self._lanes(host, range_name)}
+                except MegalinkError as exc:
+                    return 502, {"error": str(exc)}
+
+            return None
+
+    return Handler
+
+
+class ConfigServer:
+    """Serves the configuration page for one display, in a background thread."""
+
+    def __init__(self, controller: Controller, listener: Any = None) -> None:
+        self.controller = controller
+        settings = controller.config.web
+        #: The beacon listener behind ``/fleet``, if this display serves it.
+        self.listener = listener
+        self._server = Server(
+            (settings.bind, settings.port), make_handler(controller, listener=listener)
+        )
+        self._thread: threading.Thread | None = None
+
+    @property
+    def port(self) -> int:
+        return int(self._server.server_address[1])
+
+    def start(self) -> ConfigServer:
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="megalink-web", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+    def __enter__(self) -> ConfigServer:
+        return self.start()
+
+    def __exit__(self, *exc: object) -> None:
+        self.stop()
+
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Megalink display</title>
+<style>
+:root{color-scheme:dark;--bg:#1d1f21;--panel:#2b2d30;--line:#3a3d41;--text:#f2f2f2;
+--muted:#9aa0a6;--accent:#4aa3df;--good:#2fbf4f;--warn:#e0a02f;--bad:#e03a2f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px}
+main{max-width:34rem;margin:0 auto}
+h1{font-size:1.15rem;margin:0 0 .25rem}
+.sub{color:var(--muted);font-size:.85rem;margin-bottom:1rem}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:14px;margin-bottom:14px}
+h2{font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+margin:0 0 .7rem}
+label{display:block;margin-bottom:.8rem}
+label span{display:block;font-size:.78rem;color:var(--muted);margin-bottom:.25rem}
+select,input{width:100%;padding:.6rem;background:#1a1c1e;color:var(--text);
+border:1px solid var(--line);border-radius:7px;font-size:1rem}
+.row{display:flex;gap:10px}.row>*{flex:1}
+button{width:100%;padding:.75rem;border:0;border-radius:7px;background:var(--accent);
+color:#0d1b24;font-size:1rem;font-weight:600;cursor:pointer}
+button.ghost{background:#3a3d41;color:var(--text)}
+button+button{margin-top:8px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:.3rem .8rem;margin:0;font-size:.92rem}
+dt{color:var(--muted)}dd{margin:0;text-align:right}
+.big{font-size:1.6rem;font-weight:700;color:var(--good)}
+.note{margin-top:.7rem;font-size:.85rem;min-height:1.2rem}
+.ok{color:var(--good)}.err{color:var(--bad)}.stale{color:var(--warn)}
+</style></head><body><main>
+<h1 id="name">Megalink display</h1>
+<div class="sub" id="showing">loading…</div>
+<div class="sub" id="fleetlink" hidden></div>
+
+<section><h2>Now showing</h2>
+<dl>
+<dt>Shooter</dt><dd id="shooter">—</dd>
+<dt>Total</dt><dd class="big" id="total">—</dd>
+<dt>Shots</dt><dd id="shots">—</dd>
+<dt>Feed</dt><dd id="feed">—</dd>
+</dl></section>
+
+<section><h2>What to display</h2>
+<label><span>Club</span><select id="host"></select></label>
+<label><span>Range</span><select id="range"></select></label>
+<label><span>Firing point</span><select id="lane"></select></label>
+<button id="save">Save</button>
+<button class="ghost" id="identify">Identify this screen</button>
+<div class="note" id="note"></div>
+</section>
+
+<section><h2>When nobody is shooting</h2>
+<label><span>Message</span><input id="idle" placeholder="POSITION NOT IN USE"></label>
+<label><span>Logo (PNG or GIF, shown instead of the message)</span>
+<input id="logofile" type="file" accept="image/png,image/gif"></label>
+<img id="logopreview" alt="" style="max-width:100%;max-height:9rem;display:none;
+margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:7px">
+<button id="savelogo">Upload logo</button>
+<button class="ghost" id="dellogo">Remove logo</button>
+<div class="note" id="logonote"></div>
+</section>
+
+<section><h2>This screen</h2>
+<label><span>Name</span><input id="dname" placeholder="hostname"></label>
+<div class="row">
+<label><span>Mode</span><select id="mode">
+<option value="gui">Window</option><option value="terminal">Console</option>
+<option value="browser">Web browser</option></select></label>
+<label><span>Redraw (s)</span><input id="interval" type="number" step="0.1" min="0.1" max="60"></label>
+</div>
+<label id="urlrow" hidden><span>Address</span>
+<input id="url" placeholder="leave empty for Megalink's own page"></label>
+<div class="note" id="modenote"></div>
+<button class="ghost" id="save2">Save screen settings</button>
+</section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let cfg = null, hosts = [];
+
+const say = (text, cls="") => { const n = $("note"); n.textContent = text; n.className = "note " + cls; };
+
+// This display may require a token. Take it from the link that opened the page,
+// remember it, and send it on every call -- a display with a token set would
+// otherwise refuse its own configuration page.
+const TOKEN_KEY = "megalink-token";
+function token() {
+  const fromUrl = new URLSearchParams(location.search).get("token");
+  if (fromUrl) { try { localStorage.setItem(TOKEN_KEY, fromUrl); } catch (e) {} return fromUrl; }
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+}
+function authed(opts={}) {
+  const secret = token();
+  if (secret) opts.headers = Object.assign({}, opts.headers, {"X-Megalink-Token": secret});
+  return opts;
+}
+
+// Every display can serve the dashboard for the whole range, so point at it
+// from here rather than making anyone remember which machine to open.
+// The address box only means anything in browser mode.
+function showMode() {
+  const browser = $("mode").value === "browser";
+  $("urlrow").hidden = !browser;
+  $("modenote").textContent = browser
+    ? "Shows Megalink's own page in a full-screen browser. Needs chromium installed."
+    : "";
+}
+
+async function showFleet() {
+  try {
+    const peers = await api("/api/peers");
+    if (!peers.fleet) return;
+    const el = $("fleetlink");
+    el.innerHTML = '<a href="/fleet">Manage all ' + peers.count +
+      (peers.count === 1 ? " display" : " displays") + " on this range \u2192</a>";
+    el.hidden = false;
+  } catch (e) { /* an older display, or the beacon is off */ }
+}
+
+async function api(path, opts={}) {
+  const r = await fetch(path, authed(opts));
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+function fill(select, values, chosen) {
+  select.innerHTML = "";
+  for (const v of values) {
+    const o = document.createElement("option");
+    o.value = v.value; o.textContent = v.label;
+    if (v.value === chosen) o.selected = true;
+    select.appendChild(o);
+  }
+}
+
+async function loadHosts() {
+  try {
+    hosts = (await api("/api/hosts")).hosts;
+  } catch (e) { say("could not reach Megalink Live: " + e.message, "err"); return; }
+  fill($("host"), hosts.map(h => ({value: h.host, label: h.name || h.host})), cfg.host);
+  if (!hosts.some(h => h.host === cfg.host) && cfg.host) {
+    const o = document.createElement("option");
+    o.value = cfg.host; o.textContent = cfg.host + " (not streaming)"; o.selected = true;
+    $("host").appendChild(o);
+  }
+  await loadRanges();
+}
+
+async function loadRanges() {
+  const host = $("host").value;
+  if (!host) return;
+  let ranges = [];
+  try { ranges = (await api("/api/ranges?host=" + encodeURIComponent(host))).ranges; }
+  catch (e) { say(e.message, "err"); }
+  fill($("range"), ranges.map(r => ({value: r.key, label: r.name || r.key})), cfg.range);
+  await loadLanes();
+}
+
+async function loadLanes() {
+  const host = $("host").value, range = $("range").value;
+  if (!host) return;
+  let lanes = [];
+  try {
+    lanes = (await api(`/api/lanes?host=${encodeURIComponent(host)}&range=${encodeURIComponent(range)}`)).lanes;
+  } catch (e) { say(e.message, "err"); }
+  if (!lanes.length) lanes = cfg.lane ? [cfg.lane] : [];
+  fill($("lane"), lanes.map(l => ({value: l, label: l})), cfg.lane);
+}
+
+async function refresh() {
+  let s;
+  try { s = await api("/api/status"); } catch { return; }
+  $("name").textContent = s.name;
+  $("showing").textContent = s.error ? s.error : (s.host_name ? s.host_name + " · " + s.range_name : s.showing);
+  $("shooter").textContent = s.shooter || "—";
+  $("total").textContent = s.total || "—";
+  $("shots").textContent = s.shots;
+  const feed = $("feed");
+  if (s.error) { feed.textContent = "error"; feed.className = "err"; }
+  else if (!s.connected) { feed.textContent = "connecting"; feed.className = "stale"; }
+  else if (s.age !== null && s.age < 5) { feed.textContent = "live"; feed.className = "ok"; }
+  else { feed.textContent = Math.round(s.age) + "s ago"; feed.className = "stale"; }
+}
+
+async function save(patch, button) {
+  button.disabled = true;
+  try {
+    await api("/api/config", {method: "PUT", headers: {"Content-Type": "application/json"},
+                              body: JSON.stringify(patch)});
+    cfg = await api("/api/config");
+    say("saved", "ok");
+    refresh();
+  } catch (e) { say(e.message, "err"); }
+  button.disabled = false;
+}
+
+$("host").onchange = loadRanges;
+$("range").onchange = loadLanes;
+$("save").onclick = () => save({host: $("host").value, range: $("range").value, lane: $("lane").value}, $("save"));
+$("save2").onclick = () => save({
+  beacon: {name: $("dname").value},
+  display: {
+    mode: $("mode").value,
+    url: $("url").value.trim(),
+    interval: parseFloat($("interval").value) || 0.5,
+    idle_text: $("idle").value,
+  },
+}, $("save2"));
+
+const logoNote = (t, cls="") => { $("logonote").textContent = t; $("logonote").className = "note " + cls; };
+
+function showLogo() {
+  fetch("/api/logo", {cache: "no-store"}).then(r => {
+    const img = $("logopreview");
+    if (!r.ok) { img.style.display = "none"; return; }
+    return r.blob().then(b => { img.src = URL.createObjectURL(b); img.style.display = "block"; });
+  }).catch(() => {});
+}
+
+$("logofile").onchange = () => {
+  const f = $("logofile").files[0];
+  if (!f) return;
+  const img = $("logopreview");
+  img.src = URL.createObjectURL(f);
+  img.style.display = "block";
+  logoNote(`${f.name} ready to upload`);
+};
+
+$("savelogo").onclick = async () => {
+  const f = $("logofile").files[0];
+  if (!f) return logoNote("choose a PNG or GIF first", "err");
+  $("savelogo").disabled = true;
+  try {
+    const r = await fetch("/api/logo", authed({method: "PUT", body: f}));
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.error || r.statusText);
+    logoNote(`uploaded ${b.stored} (${Math.round(b.bytes / 1024)} kB)`, "ok");
+    showLogo();
+  } catch (e) { logoNote(e.message, "err"); }
+  $("savelogo").disabled = false;
+};
+
+$("dellogo").onclick = async () => {
+  try {
+    const r = await fetch("/api/logo", authed({method: "DELETE"}));
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    $("logopreview").style.display = "none";
+    $("logofile").value = "";
+    logoNote("removed", "ok");
+  } catch (e) { logoNote(e.message, "err"); }
+};
+$("identify").onclick = async () => {
+  try { await api("/api/identify", {method: "POST"}); say("look at the screen", "ok"); }
+  catch (e) { say(e.message, "err"); }
+};
+
+(async () => {
+  cfg = await api("/api/config");
+  $("dname").value = cfg.beacon.name || "";
+  $("mode").value = cfg.display.mode;
+  $("url").value = cfg.display.url || "";
+  showMode();
+  $("interval").value = cfg.display.interval;
+  $("idle").value = cfg.display.idle_text || "";
+  showLogo();
+  showFleet();
+  $("mode").onchange = showMode;
+  await loadHosts();
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script></body></html>
+"""

@@ -1,0 +1,41 @@
+{
+ "clockSkew": [
+  null,
+  -10480026240091
+ ],
+ "ranges": [
+  null,
+  {
+   "clock": {
+    "running": true,
+    "stages": [
+     {
+      "countingUp": true,
+      "offset": 0,
+      "startCount": 0,
+      "type": "COMMAND"
+     },
+     {
+      "countingUp": true,
+      "offset": 0,
+      "startCount": 0,
+      "type": "SHOOT"
+     }
+    ],
+    "timestamp": 0
+   },
+   "gunType": "RIFLE",
+   "host": "Ølstykke skytteforening",
+   "name": "1",
+   "nameRangeComp": "",
+   "practice": true,
+   "protocolVersion": "0.0.1",
+   "relay": 41,
+   "relayName": "",
+   "seriesName": "",
+   "showFlags": false,
+   "type": "CLOCKED",
+   "version": "23.32.0"
+  }
+ ]
+}

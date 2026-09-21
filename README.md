@@ -1,0 +1,156 @@
+<img src="assets/icon.svg" width="72" align="right" alt="">
+
+# rpi-megalink-viewer
+
+[![CI](https://github.com/null-jones/rpi-megalink-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/null-jones/rpi-megalink-viewer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
+A per-firing-point score display for [Megalink Live](https://live.megalink.no/),
+small enough to run on a Raspberry Pi Zero 2 W.
+
+Point one at a club, a range and a firing point, and it shows that shooter's card
+on a screen beside them: the target face with their shots plotted on it, the
+running total, the clock, and how the group is sitting. Bolt it to the bench,
+give it power, and it comes up by itself.
+
+**No dependencies.** Python 3.9+ and the standard library — Tkinter for the
+window, `http.server` for the configuration page, `urllib` for the feed. Nothing
+to compile, and nothing to break on an upgrade two years from now.
+
+---
+
+## Try it in thirty seconds
+
+```bash
+git clone git@github.com:null-jones/rpi-megalink-viewer.git
+cd rpi-megalink-viewer
+make install
+
+uv run megalink hosts                      # which clubs are shooting now?
+uv run megalink gui stord-pk 1-10 9        # open a window on one firing point
+```
+
+You do not need a Megalink system of your own — the feed is public, and there is
+usually a range live somewhere.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ NSF 25m NAIS · Relay: 2               Stord PK              [ 9 ]   │
+│ Etai Moredehi Bogen                                       1st of 2  │
+│ ┌───────────────┬───────┬───────┬───────┬───────┬───────┬───────┐   │
+│ │ 2. Serie 150S │    46 │    41 │    38 │       │       │       │   │
+│ └───────────────┴───────┴───────┴───────┴───────┴───────┴───────┘   │
+│ ┌──────────────────────────┐    ┌────────────────┬────────────────┐ │
+│ │        1  2  3  4        │    │   1:   9.4     │   6:  10.2     │ │
+│ │     ╭──────────────╮     │    ├────────────────┼────────────────┤ │
+│ │    │  │  ◍ ◍ ✛   │  │    │    │   2:  10.7     │   7:   9.8     │ │
+│ │     ╰──────────────╯     │    ├────────────────┼────────────────┤ │
+│ │        1  2  3  4        │    │   5:  10.1     │  10:   9.7     │ │
+│ └──────────────────────────┘    ├────────────────┼────────────────┤ │
+│ μ 45.0mm · σ 15.4mm ·           │       43       │███ 84 (1x) ████│ │
+│ centre (+17.3, +48.5) mm        │              00:47              │ │
+│ live · 15 shots · 1 inner · protocol v2                             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Put it on a Raspberry Pi
+
+Flash **Raspberry Pi OS Lite**, set the Wi-Fi and SSH in Raspberry Pi Imager,
+then from your laptop:
+
+```bash
+make push PI=pi@fp-09 HOST=stord-pk RANGE=1-10 LANE=9 MODE=gui AUTOLOGIN=1
+```
+
+That copies this checkout over SSH — no GitHub credentials ever go on the Pi —
+installs it, and sets up a boot service. The Pi comes up showing firing point 9
+and keeps doing it through reboots and power cuts.
+
+Add `TOKEN=some-secret` to lock the displays down. Give every display on a range
+the same one, so they can manage each other.
+
+[docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md) has the rest — including what to do
+when the screen stays black, which on a Lite image it will, once.
+
+## Three ways to show it
+
+| Mode | What it does | Good for |
+|---|---|---|
+| `gui` | Draws the target and the card itself, in Tkinter | **The default.** Light enough for a Pi Zero 2 W |
+| `browser` | Full-screen Chromium on Megalink's own page | A Pi 4. Always current, whatever the discipline |
+| `terminal` | Draws to the console, no X server needed | A Pi with no display stack, and for debugging |
+
+```bash
+megalink config --mode browser
+```
+
+Changing the mode restarts the display by itself — including remotely, which is
+how you rescue a screen whose X server has given up.
+
+## Every display manages the range
+
+There is no central server to run. Each display hears the others over UDP
+broadcast, so **each one also serves the dashboard for all of them**, on the same
+port as its own settings page:
+
+```
+http://fp-09.local:8080/         this firing point
+http://fp-09.local:8080/fleet    every firing point on the range
+```
+
+Open whichever display you happen to be standing next to and renumber the whole
+row, point them all at a different range, or make one flash its name so you can
+find it. No machine is special, and losing one loses nothing but that screen.
+
+## Configuration
+
+Everything lives in one JSON file (`/etc/megalink/display.json` on a Pi), and
+anything in it can be set from the web page, the CLI, or the fleet dashboard.
+
+```bash
+megalink config --host stord-pk --range 1-10 --lane 9
+megalink config --mode gui --interval 0.5
+megalink config                      # show what this machine is set to
+```
+
+A firing point with nobody on it says `POSITION NOT IN USE`, or shows your club
+badge if you upload one.
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md) | Flashing, the boot service, X on a Lite image, the fleet, and what goes wrong |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | The Megalink Live data format, reverse-engineered: both protocol generations, the scoring rules, the target geometry |
+| [docs/DISPLAY.md](docs/DISPLAY.md) | Why the screen looks the way it does |
+| [docs/LIBRARY.md](docs/LIBRARY.md) | Using the package from your own code |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Tests, linting, and how this was built |
+
+## Development
+
+```bash
+make check     # lint, format check, and the full test suite
+make test
+```
+
+The suite needs no network: it runs against captured feeds from several real
+ranges in `tests/data/`.
+
+Every pull request runs the same checks on Python 3.9, 3.11 and 3.13 — the ends
+of the supported range, plus the 3.11 that Raspberry Pi OS Bookworm ships. The
+window is Tkinter, so CI opens a real X display with `xvfb` rather than letting
+the GUI tests quietly skip themselves; a silent skip of two hundred tests reads
+as a green build. The deployment shell scripts are checked with `shellcheck` in
+the same run, since a mistake in those surfaces at the range rather than here.
+
+## Licence
+
+[MIT](LICENSE). Do what you like with it.
+
+## What this is, and is not
+
+An independent project, not affiliated with or endorsed by Megalink AS. It reads
+the same public feed that [live.megalink.no](https://live.megalink.no/) serves to
+any browser, and it only ever reads — nothing here writes to a range, a target or
+a scoring system.

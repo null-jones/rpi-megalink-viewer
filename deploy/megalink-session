@@ -1,0 +1,18 @@
+#!/bin/sh
+# The X session: a window manager, then the display.
+#
+# The window manager is the part that was missing. A bare X server maps a
+# toolkit's window and reports it visible, but nothing sizes it, raises it or
+# gives it focus -- and on some drivers nothing reaches the screen. matchbox is
+# the usual answer on a Pi: about a megabyte, no desktop, no panel, no icons,
+# and it makes a single application fill the screen, which is exactly what a
+# score display wants.
+set -eu
+
+VENV="${MEGALINK_VENV:-/opt/megalink/venv}"
+
+if command -v matchbox-window-manager >/dev/null 2>&1; then
+    matchbox-window-manager -use_titlebar no -use_cursor no &
+fi
+
+exec "$VENV/bin/python" -m megalink_viewer display

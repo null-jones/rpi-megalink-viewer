@@ -1,0 +1,159 @@
+#!/bin/sh
+# Start the display in whichever way its configuration asks for.
+#
+# One systemd unit runs this, so switching between a window and the bare console
+# is a configuration change plus a restart -- not an edit to the unit file. That
+# matters because the configuration is editable from the web page and the fleet
+# dashboard, and the unit file is not.
+set -eu
+
+VENV="${MEGALINK_VENV:-/opt/megalink/venv}"
+PY="$VENV/bin/python"
+CONFIG="${MEGALINK_CONFIG:-/etc/megalink/display.json}"
+
+# Run the package, never the console script in venv/bin. A truncated console
+# script -- a zero-byte file that kept its execute bit -- runs as an empty shell
+# script: no output, exit 0. Everything downstream then looks like a clean,
+# deliberate shutdown while nothing has run at all.
+if [ ! -x "$PY" ]; then
+    echo "no Python environment at $PY" >&2
+    exit 1
+fi
+if [ -z "$("$PY" -m megalink_viewer --version 2>/dev/null)" ]; then
+    echo "megalink is not installed in $VENV (python -m megalink_viewer says nothing)" >&2
+    exit 1
+fi
+
+# Read the mode straight from the file. Going back through the CLI for this made
+# a failure there take the whole launcher down with a traceback.
+mode="$(
+    "$VENV/bin/python" - "$CONFIG" 2>/dev/null <<'PYTHON' || echo gui
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("display", {}).get("mode") or "gui")
+except Exception:
+    print("gui")
+PYTHON
+)"
+
+# Put the console back into text mode. X switches the virtual terminal into
+# graphics mode and is supposed to switch it back on the way out; a server that
+# died while starting often has not, and the console then shows nothing at all --
+# a blank screen that looks like a dead display but is a live one drawing into a
+# terminal the kernel has stopped painting.
+#
+# KDSETMODE = 0x4B3A, KD_TEXT = 0. Done with the Python already here rather than
+# pulling in kbd for chvt.
+text_mode() {
+    "$PY" - <<'PYTHON' 2>/dev/null || true
+import fcntl, os
+try:
+    fd = os.open("/dev/tty1", os.O_RDWR | os.O_NOCTTY)
+except OSError:
+    raise SystemExit(0)
+try:
+    fcntl.ioctl(fd, 0x4B3A, 0)
+except OSError:
+    pass          # not a console, or not ours to set: nothing to do
+finally:
+    os.close(fd)
+PYTHON
+}
+
+text_mode
+
+if [ "$mode" = terminal ]; then
+    # Stop the console blanking after ten minutes. A screen beside a firing
+    # point that goes black while nobody touches a keyboard is a broken screen.
+    setterm --blank 0 --powerdown 0 >/dev/tty1 2>/dev/null || true
+    exec "$PY" -m megalink_viewer display
+fi
+
+# --- a window, which means an X server -------------------------------------
+#
+# Started from a service rather than a login session, Xorg has to be told which
+# virtual terminal to take: it cannot work it out, and without `vt1` it exits
+# reporting only "server error".
+#
+#   -s 0 -dpms   no screen saver and no power-management blanking
+#   -nocursor    no pointer on a screen with no mouse
+#
+# Deliberately *no* `-keeptty`. Xorg's own manual calls it "only useful when
+# debugging", and `startx` never passes it. It stops the server detaching from
+# its controlling terminal, and with it the server can fail to take the virtual
+# terminal at all -- so the console keeps the scanout while X renders happily
+# into a buffer that never reaches the screen. Everything reports success and
+# nothing appears, including other clients. Set MEGALINK_XORG_ARGS to override.
+XORG_ARGS="${MEGALINK_XORG_ARGS:-vt1 -nocursor -s 0 -dpms -nolisten tcp}"
+
+# The session starts a window manager and then the display. Without a window
+# manager a bare X server maps the window and leaves it: nothing sizes it,
+# raises it or focuses it, and on some drivers nothing reaches the screen.
+SESSION="${MEGALINK_SESSION:-/opt/megalink/megalink-session}"
+
+if [ ! -x /usr/bin/xinit ]; then
+    echo "no X server installed (xinit is missing), using the console instead" >&2
+    echo "  install it with: sudo apt install --no-install-recommends xserver-xorg xinit x11-xserver-utils" >&2
+    text_mode
+    setterm --blank 0 --powerdown 0 >/dev/tty1 2>/dev/null || true
+    exec "$PY" -m megalink_viewer display
+fi
+
+echo "starting X with the display as its client: $("$PY" -m megalink_viewer --version)" >&2
+
+# How long a window has to survive before we believe X actually worked. A real
+# display runs for hours; anything that comes back in seconds failed to start,
+# whatever it claims as an exit status.
+MIN_RUNTIME=${MEGALINK_MIN_RUNTIME:-10}
+
+started="$(date +%s)"
+status=0
+# `|| status=$?` rather than a bare call: under `set -e` a failure would end the
+# script here and the diagnosis below would never run.
+# shellcheck disable=SC2086
+/usr/bin/xinit "$SESSION" -- :0 $XORG_ARGS || status=$?
+ran=$(( $(date +%s) - started ))
+
+# Exit status alone is not enough to tell whether this worked. A server that
+# cannot create its socket shuts itself down tidily and xinit reports success,
+# so a window that lasted one second is a failure however it exited.
+if [ "$status" -eq 0 ] && [ "$ran" -ge "$MIN_RUNTIME" ]; then
+    exit 0
+fi
+
+echo "X did not stay up (exit $status after ${ran}s). The end of its log:" >&2
+for log in \
+    "${HOME:-/opt/megalink}/.local/share/xorg/Xorg.0.log" \
+    /var/log/Xorg.0.log
+do
+    if [ -r "$log" ]; then
+        echo "--- $log" >&2
+        tail -n 25 "$log" >&2
+        break
+    fi
+done
+
+cat >&2 <<'EXPLAIN'
+--- (no log above means X never got far enough to write one)
+
+Falling back to the console display. Scores will still be shown, without the
+plotted target. More to the point, the configuration page and the network
+beacon stay up, so this display can still be found and reconfigured remotely --
+which it could not be if this process simply died and systemd restarted it in a
+loop.
+
+To make this permanent, set the mode to "terminal" from the configuration page
+or the fleet dashboard. To keep trying for a window, fix X and restart the
+service.
+EXPLAIN
+
+# X will have left the console in graphics mode on its way down.
+text_mode
+setterm --blank 0 --powerdown 0 >/dev/tty1 2>/dev/null || true
+
+# Say what we are about to run and prove it can run at all. When the display
+# exited silently this was the missing fact: whether the binary was even the one
+# that had just been installed.
+echo "starting console display: $("$PY" -m megalink_viewer --version)" >&2
+exec "$PY" -m megalink_viewer display

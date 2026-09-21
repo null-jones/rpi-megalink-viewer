@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a pull request cancels the run still going for the first.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One version failing should not hide what the others would have said.
+      fail-fast: false
+      matrix:
+        # The ends of the range pyproject.toml claims, and the two that matter
+        # in practice: Raspberry Pi OS Bookworm ships 3.11, Trixie ships 3.13.
+        python: ["3.9", "3.11", "3.13"]
+
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Tk and a virtual display
+        # The window is Tkinter, so most of the test suite needs a real X
+        # display to open a window on. xvfb is that display. Without it the
+        # GUI tests do not fail -- they error at Tk() -- so this is not
+        # optional dressing.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Confirm the GUI tests can really run
+        # tests/test_gui.py skips itself when Tkinter is missing, which is right
+        # for a Pi with no display stack and wrong for CI: a silent skip of two
+        # hundred tests reads as a green build. Fail here instead.
+        run: |
+          xvfb-run -a uv run python - <<'PY'
+          import sys, tkinter
+          root = tkinter.Tk()
+          root.withdraw()
+          print(f"python {sys.version.split()[0]}  Tk {tkinter.TkVersion}")
+          root.destroy()
+          PY
+
+      - name: Lint and format
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+
+      - name: Tests
+        run: xvfb-run -a uv run pytest -q
+
+  shell:
+    name: Deployment scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # These install and configure a Raspberry Pi, and a mistake in one is
+      # found at the range rather than here. They are not covered by pytest.
+      - name: Check the shell scripts parse
+        run: |
+          for script in deploy/*.sh deploy/megalink-launch deploy/megalink-session; do
+            sh -n "$script" && echo "ok   $script"
+          done
+
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          additional_files: deploy/megalink-launch deploy/megalink-session
+          severity: warning

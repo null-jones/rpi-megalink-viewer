@@ -1,0 +1,64 @@
+# The score display. Installed by deploy/install.sh.
+#
+# Deliberately takes no arguments: everything about what this screen shows lives
+# in /etc/megalink/display.json, which the display watches, the on-device web
+# page edits, and the fleet dashboard can push to. Changing the firing point
+# does not need this file touched, or even a restart.
+[Unit]
+Description=Megalink score display
+Documentation=https://live.megalink.no/
+After=network-online.target
+Wants=network-online.target
+# Raspberry Pi OS runs a login prompt on tty1, and this wants the same screen.
+# Conflicts rather than disabling it: stop this service and the login prompt
+# comes back, which is worth having on a box whose network has just failed.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+Type=simple
+User=megalink
+# video and render to talk to the GPU, input for the keyboard, tty for the
+# console: between them, what it takes to draw without a desktop session.
+SupplementaryGroups=video render input tty
+WorkingDirectory=/opt/megalink
+ExecStart=/opt/megalink/megalink-launch
+Restart=always
+RestartSec=5
+
+# PAMName=login is *not* set here. X needs it -- without a logind session it
+# never becomes DRM master and drives nothing -- but it is also the setting most
+# likely to stop the service starting at all, and a console display that works
+# beats a window that might. The installer adds it as a drop-in for gui mode
+# only, in /etc/systemd/system/megalink-display.service.d/.
+
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+# Frames go to the screen, diagnostics go to the journal. With both on the
+# journal the console display renders perfectly into a log file nobody is
+# looking at, and the screen keeps showing whatever the boot left behind.
+StandardOutput=tty
+StandardError=journal
+
+# Hardening here is kept to what does not fight the graphics stack. A display on
+# a range network is not a hostile environment, and a screen that stays black is
+# a worse outcome than a service with ordinary privileges.
+#
+# Deliberately *not* NoNewPrivileges: Xorg starts through a setuid wrapper,
+# which that would block.
+#
+# Deliberately *not* PrivateTmp: X puts its socket in /tmp/.X11-unix, which is
+# created once at boot in the real /tmp. A private /tmp is empty, X cannot
+# create the directory as a non-root user, and it exits with
+# "_XSERVTransmkdir: ERROR: euid != 0" before it ever probes a screen.
+#
+# ProtectSystem=full rather than strict, because Xorg writes its log under the
+# service user's home in /opt and strict would make that read-only.
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/etc/megalink
+
+[Install]
+WantedBy=multi-user.target

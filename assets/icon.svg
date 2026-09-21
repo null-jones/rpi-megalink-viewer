@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="A shooting target on a screen, broadcasting">
+  <title>rpi-megalink-viewer</title>
+  <desc>An air-rifle target on a dark screen: black aiming area, white ring lines,
+  and a red shot with a ring line crossing over it, the way the display draws them.
+  The outermost ring is split into two arcs, so the target also reads as a signal.</desc>
+
+  <!-- The icon carries its own ground rather than following the page. An SVG's
+       prefers-color-scheme follows the *system* theme, not the background it is
+       placed on, so a theme-aware icon goes invisible on a light README read by
+       someone in dark mode. These are the display's own colours. -->
+  <rect width="64" height="64" rx="14" fill="#2b2b2b" />
+
+  <!-- Broadcast. The outermost ring is two arcs instead of a circle: a target at
+       a glance, a signal on a second look, which is what a fleet of these is. -->
+  <g fill="none" stroke="#4aa3df" stroke-width="3" stroke-linecap="round">
+    <path d="M 46.8 14.6 A 22 22 0 0 1 46.8 49.4" />
+    <path d="M 17.2 49.4 A 22 22 0 0 1 17.2 14.6" />
+  </g>
+
+  <!-- The aiming area, black as it is on paper, and its outer scoring ring. -->
+  <circle cx="32" cy="32" r="16.5" fill="#1b1b1b" stroke="#f4f2ea" stroke-width="2.4" />
+
+  <!-- Painted in the display's own order: the shot goes down, and then the ring
+       line is drawn back over the top of it. That is the one rule the display
+       never breaks — a group must never hide a ring — and it is why the white
+       line runs straight across the red here. -->
+  <circle cx="38.4" cy="25.6" r="6" fill="#e03a2f" stroke="#6d150f" stroke-width="1" />
+  <circle cx="32" cy="32" r="9" fill="none" stroke="#f4f2ea" stroke-width="2.4" />
+</svg>
