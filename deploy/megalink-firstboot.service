@@ -1,0 +1,17 @@
+# Gives a display flashed from the release image a name of its own. Installed
+# by deploy/install.sh --image; see deploy/megalink-firstboot.
+[Unit]
+Description=Give this display a name of its own
+Documentation=https://github.com/null-jones/rpi-megalink-viewer
+# Before the network comes up, so the name the router is given is the new one,
+# and before anything that announces the name or builds a hotspot from it.
+After=local-fs.target
+Before=network-pre.target avahi-daemon.service megalink-display.service megalink-netwatch.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/megalink/megalink-firstboot
+
+[Install]
+WantedBy=multi-user.target

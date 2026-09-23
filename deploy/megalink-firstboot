@@ -1,0 +1,43 @@
+#!/bin/sh
+# Give a display flashed from the shared image a name of its own.
+#
+# Every card written from the release image starts out called "megalink". A
+# room full of them would then all have the same name on the network, the same
+# name in the fleet dashboard and -- worst -- the same name for their fallback
+# Wi-Fi, with no telling which hotspot belongs to which screen. So on boot, a
+# display still called "megalink" renames itself from its serial number, which
+# is printed on the board and never changes: megalink-3f2a.
+#
+# Anything else is left alone. A name set in Raspberry Pi Imager wins, as does
+# one set by hand.
+set -eu
+
+DEFAULT=megalink
+current="$(tr -d ' \n' < /etc/hostname 2>/dev/null || true)"
+[ "$current" = "$DEFAULT" ] || exit 0
+
+# The last four hex digits of the SoC serial; the network card's address if the
+# device tree has no serial; four random digits if there is neither.
+suffix=""
+serial=/sys/firmware/devicetree/base/serial-number
+if [ -r "$serial" ]; then
+    suffix="$(tr -d '\0' < "$serial" | tr 'A-F' 'a-f' | tr -cd '0-9a-f' | tail -c 4)"
+fi
+if [ -z "$suffix" ]; then
+    for nic in wlan0 eth0 end0; do
+        if [ -r "/sys/class/net/$nic/address" ]; then
+            suffix="$(tr -d ':\n' < "/sys/class/net/$nic/address" | tail -c 4)"
+            break
+        fi
+    done
+fi
+[ -n "$suffix" ] || suffix="$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+
+name="$DEFAULT-$suffix"
+printf '%s\n' "$name" > /etc/hostname
+# Rewritten in place rather than with sed -i, which replaces the file by
+# renaming a new one over it -- and fails outright where /etc/hosts is a mount.
+hosts="$(grep -v '^127\.0\.1\.1' /etc/hosts 2>/dev/null || true)"
+printf '%s\n127.0.1.1\t%s\n' "$hosts" "$name" > /etc/hosts
+hostname "$name"
+echo "named this display $name"

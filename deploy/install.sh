@@ -17,6 +17,7 @@ SERVICE_USER=megalink
 MODE=""
 
 HOST=""; RANGE=""; LANE=""; NAME=""; TOKEN=""; WEB_PORT=""; URL=""; LANE2=""
+IMAGE=no; WITH_BROWSER=no
 
 usage() {
     cat >&2 <<'USAGE'
@@ -46,6 +47,12 @@ usage: install.sh [options]
                      the only way some Pis will let X drive the screen: X needs
                      a logind session, and a login is what reliably makes one.
   --service          go back to the systemd service (the default)
+  --with-browser     install Chromium whatever the mode, so the display can be
+                     switched to browser mode later without a network
+  --image            prepare a disk image rather than this machine: the
+                     services are enabled but not started, nothing is checked
+                     for running, and the display names itself on first boot.
+                     What image/build.sh runs inside the image it builds.
 USAGE
     exit 2
 }
@@ -65,6 +72,8 @@ while [ $# -gt 0 ]; do
         --token) TOKEN="$2"; shift 2 ;;
         --no-service) INSTALL_SERVICE=no; shift ;;
         --autologin) AUTOLOGIN=yes; shift ;;
+        --image) IMAGE=yes; WITH_BROWSER=yes; shift ;;
+        --with-browser) WITH_BROWSER=yes; shift ;;
         --service) AUTOLOGIN=no; shift ;;
         -h|--help) usage ;;
         *) echo "unknown option: $1" >&2; usage ;;
@@ -107,9 +116,11 @@ fi
 # Bookworm; iw counts the phones joined to it, so it is never dropped from under
 # someone halfway through setting the display up.
 PACKAGES="python3 python3-venv network-manager iw"
-if [ "$EFFECTIVE_MODE" = gui ] || [ "$EFFECTIVE_MODE" = browser ]; then
+# An image carries everything, so a display flashed from it can be switched to
+# any mode from its settings page -- with no terminal and perhaps no network.
+if [ "$IMAGE" = yes ] || [ "$EFFECTIVE_MODE" = gui ] || [ "$EFFECTIVE_MODE" = browser ]; then
     PACKAGES="$PACKAGES xserver-xorg xinit x11-xserver-utils"
-    [ "$EFFECTIVE_MODE" = gui ] && PACKAGES="$PACKAGES python3-tk"
+    { [ "$IMAGE" = yes ] || [ "$EFFECTIVE_MODE" = gui ]; } && PACKAGES="$PACKAGES python3-tk"
     # A window manager. Without one a bare X server maps a window and leaves it
     # there, with nothing to size, raise or focus it.
     PACKAGES="$PACKAGES matchbox-window-manager"
@@ -121,11 +132,11 @@ if [ "$EFFECTIVE_MODE" = gui ] || [ "$EFFECTIVE_MODE" = browser ]; then
     # and puts nothing on the screen, for any client.
     PACKAGES="$PACKAGES gldriver-test"
 fi
-if [ "$EFFECTIVE_MODE" = browser ]; then
-    # Chromium is what Raspberry Pi OS ships and what the kiosk switches suit.
-    # It is a few hundred megabytes in use: fine on a Pi 4, tight on a Pi Zero,
-    # which is why the display warns about it at startup rather than here.
-    PACKAGES="$PACKAGES chromium-browser"
+if [ "$EFFECTIVE_MODE" = browser ] || [ "$WITH_BROWSER" = yes ]; then
+    # "chromium", not "chromium-browser": on Pi OS Trixie the latter is a stale
+    # Bookworm build several versions behind, and "chromium" is current on both.
+    # A few hundred megabytes in use: fine on a Pi 4, tight on a Pi Zero.
+    PACKAGES="$PACKAGES chromium"
 fi
 echo "installing packages: $PACKAGES"
 DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -209,6 +220,7 @@ fi
 echo "installed $("$PY" -m megalink_viewer --version)"
 install -m 0755 "$SOURCE/deploy/megalink-launch" "$PREFIX/megalink-launch"
 install -m 0755 "$SOURCE/deploy/megalink-session" "$PREFIX/megalink-session"
+install -m 0755 "$SOURCE/deploy/megalink-firstboot" "$PREFIX/megalink-firstboot"
 sync
 chown -R "$SERVICE_USER:$SERVICE_USER" "$PREFIX"
 
@@ -355,6 +367,15 @@ else
 fi
 
 # --- the service ----------------------------------------------------------
+# In an image nothing is running to reload or restart, and systemctl has to
+# work on the unit files alone -- which --root makes it do, rather than trying
+# to reach a systemd that is not there.
+units() {
+    if [ "$IMAGE" = yes ]; then systemctl --root=/ "$@"; else systemctl "$@"; fi
+}
+reload_units() {
+    [ "$IMAGE" = yes ] || systemctl daemon-reload
+}
 if [ "$INSTALL_SERVICE" = yes ]; then
     UNIT=/etc/systemd/system/megalink-display.service
     install -m 0644 "$SOURCE/deploy/megalink-display.service" "$UNIT"
@@ -382,10 +403,10 @@ if [ "$INSTALL_SERVICE" = yes ]; then
     # coming back is the difference between a Pi you can walk up to and a Pi
     # showing a frozen boot message with no way in but the network. An earlier
     # version disabled it and produced exactly that.
-    if systemctl is-enabled getty@tty1.service >/dev/null 2>&1; then
+    if units is-enabled getty@tty1.service >/dev/null 2>&1; then
         :
     else
-        systemctl enable getty@tty1.service >/dev/null 2>&1 || true
+        units enable getty@tty1.service >/dev/null 2>&1 || true
         echo "re-enabled the login prompt on tty1 as a fallback"
     fi
 
@@ -410,19 +431,23 @@ DROP
         echo "asked for a login session, which X needs"
     fi
 
-    systemctl daemon-reload
+    reload_units
 
     # An earlier empty unit file leaves the service masked even once the file is
     # whole again, so clear that state explicitly.
-    if [ "$(systemctl is-enabled megalink-display 2>/dev/null)" = masked ]; then
-        systemctl unmask megalink-display >/dev/null 2>&1 || true
-        systemctl daemon-reload
+    if [ "$(units is-enabled megalink-display 2>/dev/null)" = masked ]; then
+        units unmask megalink-display >/dev/null 2>&1 || true
+        reload_units
         echo "unmasked the service"
     fi
 
-    systemctl enable megalink-display >/dev/null
-    systemctl restart megalink-display
-    echo "service enabled and started"
+    units enable megalink-display >/dev/null
+    if [ "$IMAGE" = yes ]; then
+        echo "service enabled; it starts on the display's first boot"
+    else
+        systemctl restart megalink-display
+        echo "service enabled and started"
+    fi
 
     # The hotspot fallback: its own unit, run as root, since it changes the
     # network and the display never should. Written and checked the same way.
@@ -433,41 +458,62 @@ DROP
         cat "$SOURCE/deploy/megalink-netwatch.service" > "$NETUNIT"
         sync
     fi
-    systemctl daemon-reload
-    systemctl unmask megalink-netwatch >/dev/null 2>&1 || true
-    systemctl enable megalink-netwatch >/dev/null
-    systemctl restart megalink-netwatch
+    reload_units
+    units unmask megalink-netwatch >/dev/null 2>&1 || true
+    units enable megalink-netwatch >/dev/null
+    [ "$IMAGE" = yes ] || systemctl restart megalink-netwatch
     echo "hotspot fallback enabled"
 
-    # Give it a moment and say plainly whether it actually came up, rather than
-    # leaving "enabled" to be mistaken for "working".
-    sleep 3
+    if [ "$IMAGE" = yes ]; then
+        # A card flashed from a shared image names itself on first boot, so a
+        # room of them are not all called "megalink".
+        install -m 0644 "$SOURCE/deploy/megalink-firstboot.service" \
+            /etc/systemd/system/megalink-firstboot.service
+        units enable megalink-firstboot >/dev/null
+        echo "first-boot naming enabled"
+    fi
 
-    # If asking for a login session is what stopped it, take that back rather
-    # than leaving a Pi with no display at all. A window is worth having; it is
-    # not worth having instead of everything.
-    if ! systemctl is-active --quiet megalink-display && [ -f "$DROPIN/pam-session.conf" ]; then
-        echo "the service did not start; retrying without a login session" >&2
-        rm -f "$DROPIN/pam-session.conf"
-        rmdir "$DROPIN" 2>/dev/null || true
-        systemctl daemon-reload
-        systemctl restart megalink-display || true
+    # Nothing runs inside an image being built, so there is nothing to check --
+    # and checking would do harm: the service not running would read as the
+    # login session having stopped it, and the drop-in X needs would be removed.
+    if [ "$IMAGE" != yes ]; then
+        # Give it a moment and say plainly whether it actually came up, rather than
+        # leaving "enabled" to be mistaken for "working".
         sleep 3
+
+        # If asking for a login session is what stopped it, take that back rather
+        # than leaving a Pi with no display at all. A window is worth having; it is
+        # not worth having instead of everything.
+        if ! systemctl is-active --quiet megalink-display && [ -f "$DROPIN/pam-session.conf" ]; then
+            echo "the service did not start; retrying without a login session" >&2
+            rm -f "$DROPIN/pam-session.conf"
+            rmdir "$DROPIN" 2>/dev/null || true
+            systemctl daemon-reload
+            systemctl restart megalink-display || true
+            sleep 3
+            if systemctl is-active --quiet megalink-display; then
+                echo "running without a login session; X will probably not drive the screen." >&2
+                echo "Use --mode terminal for a console display that does." >&2
+            fi
+        fi
+
         if systemctl is-active --quiet megalink-display; then
-            echo "running without a login session; X will probably not drive the screen." >&2
-            echo "Use --mode terminal for a console display that does." >&2
+            echo "service is running"
+        else
+            echo
+            echo "WARNING: the service is enabled but not running. Its log:" >&2
+            journalctl -u megalink-display -n 60 --no-pager >&2 || true
+            echo >&2
+            echo "If X refused to start, see docs/RASPBERRY-PI.md." >&2
         fi
     fi
 
-    if systemctl is-active --quiet megalink-display; then
-        echo "service is running"
-    else
-        echo
-        echo "WARNING: the service is enabled but not running. Its log:" >&2
-        journalctl -u megalink-display -n 60 --no-pager >&2 || true
-        echo >&2
-        echo "If X refused to start, see docs/RASPBERRY-PI.md." >&2
-    fi
+fi
+
+if [ "$IMAGE" = yes ]; then
+    echo
+    echo "image prepared: the display starts, and names itself, on first boot"
+    exit 0
 fi
 
 # Read the port straight out of the file rather than back through the CLI, and

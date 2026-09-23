@@ -101,14 +101,22 @@ jobs:
         # followed by a sound megalink-session would report success.
         run: |
           failed=0
-          for script in deploy/*.sh deploy/megalink-launch deploy/megalink-session; do
-            if sh -n "$script"; then
-              echo "ok    $script"
-            else
-              echo "FAIL  $script"
-              failed=1
-            fi
-          done
+          parses() {  # parses SHELL SCRIPT...
+            shell="$1"; shift
+            for script in "$@"; do
+              if "$shell" -n "$script"; then
+                echo "ok    $script"
+              else
+                echo "FAIL  $script"
+                failed=1
+              fi
+            done
+          }
+          parses sh deploy/*.sh deploy/megalink-launch deploy/megalink-session \
+            deploy/megalink-firstboot
+          # The image is built on a build machine, by pi-gen, which is bash.
+          parses bash image/*.sh image/stage-megalink/prerun.sh \
+            image/stage-megalink/*/*.sh
           exit "$failed"
 
       # From the distribution rather than a third-party action. An action
@@ -119,4 +127,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
           shellcheck --version | head -2
-          shellcheck -S warning deploy/*.sh deploy/megalink-launch deploy/megalink-session
+          shellcheck -S warning deploy/*.sh deploy/megalink-launch deploy/megalink-session \
+            deploy/megalink-firstboot image/*.sh image/stage-megalink/prerun.sh \
+            image/stage-megalink/*/*.sh

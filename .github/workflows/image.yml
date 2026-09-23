@@ -1,0 +1,62 @@
+name: Image
+
+# The SD card image: Raspberry Pi OS Lite with the display already installed.
+# Built for every release, and attached to it, so setting up a display is
+# writing a card with Raspberry Pi Imager and nothing else. It can also be run
+# by hand from the Actions tab, which leaves the image as a workflow artifact.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    # arm64, so pi-gen builds natively rather than under qemu: about half an
+    # hour rather than several.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      # To attach the image to the release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # uv builds the wheel the image installs.
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # The runner is not short of disk, but an image build uses a lot of it:
+      # the root filesystem, the image, and the image again compressed.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Build the image
+        run: image/build.sh
+
+      - name: Check the image
+        run: sudo image/check.sh dist/image/*.img.xz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: megalink-display-image
+          path: dist/image/
+          # Already xz; zipping it again only costs time.
+          compression-level: 0
+          retention-days: 14
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/image/* --clobber

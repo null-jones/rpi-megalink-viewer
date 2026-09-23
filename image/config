@@ -1,0 +1,27 @@
+# pi-gen settings for the Megalink display image. build.sh adds the image name
+# (with the version in it) and a throwaway password for the first user.
+
+PI_GEN_RELEASE="Megalink display"
+RELEASE=trixie
+STAGE_LIST="stage0 stage1 stage2 stage-megalink"
+DEPLOY_COMPRESSION=xz
+
+# Every display boots as "megalink" and renames itself on first boot to
+# megalink-XXXX from its serial number, so a bench of new displays does not
+# have five machines answering to the same name. A name set in Raspberry Pi
+# Imager is left alone.
+TARGET_HOSTNAME=megalink
+
+# pi-gen always makes a user. Nobody logs in as this one: the image locks it,
+# and it only exists so the image can skip the first-boot wizard, which asks for
+# a keyboard these displays do not have. Imager can still add a real user.
+FIRST_USER_NAME=megalink-admin
+DISABLE_FIRST_BOOT_USER_RENAME=1
+ENABLE_SSH=0
+
+# Imager's settings (Wi-Fi, a user, SSH) arrive through cloud-init on Trixie.
+ENABLE_CLOUD_INIT=1
+
+# No WPA_COUNTRY: the Wi-Fi country is chosen on the display's own page, or
+# in Imager. Without one, the display's hotspot still works (it is 2.4 GHz,
+# which every country allows).

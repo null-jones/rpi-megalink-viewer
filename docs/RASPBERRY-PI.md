@@ -9,6 +9,93 @@ the right shooter and needs nothing from anybody afterwards. So a display gets
 its whole identity from one small file, which it *watches* — change the file and
 the screen follows within a couple of seconds. No restart, no SSH, no keyboard.
 
+## The ready-made image
+
+Every release has an SD card image attached, `megalink-display-<version>.img.xz`,
+with a `.sha256` beside it: about 800MB to download and 2.7GB written, so a 4GB
+card is the smallest that will take it and 8GB is more comfortable. It is
+Raspberry Pi OS Lite with the display already installed, and it is the way to
+set up a display without ever opening a terminal:
+
+1. Write it with Raspberry Pi Imager: *Choose OS* → *Use Custom*, and pick the
+   `.img.xz` as it is. Imager decompresses it itself.
+2. If Imager offers its settings, the Wi-Fi is the one worth setting. The
+   others can be left alone.
+3. Put the card in, plug in the screen, then the power.
+
+The first boot takes a minute or two longer than later ones, while the system
+expands to fill the card. Then the screen shows a QR code for the display's own
+settings page. If it cannot reach a network, it shows the two hotspot codes
+[described below](#when-the-wi-fi-is-wrong-the-fallback-hotspot) instead.
+
+### What is in it
+
+- **Raspberry Pi OS Lite (Trixie), 64-bit**, built by
+  [pi-gen](https://github.com/RPi-Distro/pi-gen), Raspberry Pi's own tool for
+  building Raspberry Pi OS. It runs on a Zero 2 W, 3, 4, 400, 5 or 500, but
+  not an original Zero or a Pi 1 or 2, which only run 32-bit. Install on those
+  by hand.
+- **The display, in `gui` mode**, installed by the same `deploy/install.sh` that
+  installs it by hand, with `--image` telling it that it is preparing an image
+  rather than a running machine. Everything the other modes need is installed
+  too, Chromium included, so switching to `browser` or `terminal` from the
+  settings page needs no network.
+- **The hotspot fallback**, `megalink-netwatch`, as on any installed display.
+
+### What happens on first boot
+
+- **It names itself.** Every display starts as `megalink` and renames itself
+  `megalink-` plus the last four hex digits of its serial number. The name is
+  on the screen and in the fleet dashboard, and a bench of new displays is not
+  five machines answering to the same name. A hostname set in Imager is left
+  alone.
+- **Imager's settings are applied**, through cloud-init, which is how Imager
+  customises a Trixie image.
+- **Nothing asks for a keyboard.** Raspberry Pi OS normally asks for a user name
+  on first boot, on the screen. This image skips that, since there is no
+  keyboard to answer it with.
+
+### Getting in, if you need to
+
+Nobody can log in to a display flashed with the image as it is. Root and the
+image's one user are locked, and SSH is off. A display only needs its settings
+page, and a card full of identical default passwords is exactly what gets a
+screen on a range network taken over.
+
+For a shell, create a user and enable SSH in Imager's settings when writing the
+card. That user works as it would on any Pi, and `make push` then works against
+the display like any other. An empty file named `ssh` on the boot partition also
+still switches SSH on, as on any Raspberry Pi OS card, though you still need a
+user to log in as.
+
+### Building it yourself
+
+```bash
+image/build.sh
+```
+
+It needs git, uv and Docker, and puts the image in `dist/image/`. On an arm64
+machine the build is native: under ten minutes on an Apple silicon Mac. Releases
+are built the same way, on GitHub's arm runners. Elsewhere pi-gen runs under
+qemu, which takes hours.
+
+```bash
+sudo image/check.sh dist/image/megalink-display-*.img.xz
+```
+
+This mounts the image read-only and checks that it is what it claims to be. The
+display, hotspot and renaming services are enabled, and the packages every mode
+needs are there. No account has a usable password, SSH and the first-boot
+wizard are off, and the cloud-init seed Imager writes to is in place. On arm64,
+it also runs the image's own copy of the display. The release workflow will not
+publish an image that fails it.
+
+The pi-gen release it builds from is `PI_GEN_REF` in `image/build.sh`. The
+settings it builds with are in `image/config`, and the step that installs the
+display is `image/stage-megalink/`.
+
+## Installing by hand
+
 ### Which image to flash
 
 **Raspberry Pi OS Lite, 32-bit.** In Raspberry Pi Imager it is under *Raspberry

@@ -56,8 +56,25 @@ usually a range live somewhere.
 
 ## Put it on a Raspberry Pi
 
-Flash **Raspberry Pi OS Lite**, set the Wi-Fi and SSH in Raspberry Pi Imager,
-then from your laptop:
+**The easy way: the ready-made image.** Download
+`megalink-display-<version>.img.xz` from the
+[latest release](https://github.com/null-jones/rpi-megalink-viewer/releases/latest),
+write it to an SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+(*Choose OS* → *Use Custom*), put the card in the Pi and plug it in. That is
+all: no laptop, no SSH, no terminal. The screen then says what to do next.
+
+Set the Wi-Fi in Imager's settings if it offers them, and the display joins that
+network. If not, it starts one of its own and shows a code that joins it. Either
+way you end up on its settings page, picking the club, range and firing point
+from lists. Every display names itself `megalink-` and four characters of its
+serial number, so a bench of new ones do not all answer to the same name.
+
+The image is 64-bit Raspberry Pi OS Lite (Trixie) for a Zero 2 W, 3, 4 or 5.
+[docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md#the-ready-made-image) says what is
+in it and how to build it yourself.
+
+**By hand, from a laptop.** Flash **Raspberry Pi OS Lite**, set the Wi-Fi and
+SSH in Raspberry Pi Imager, then:
 
 ```bash
 make push PI=pi@fp-09 HOST=stord-pk RANGE=1-10 LANE=9 MODE=gui AUTOLOGIN=1
@@ -184,6 +201,9 @@ Trixie are built on, and so what a display actually runs. A step fails the build
 if the fonts there cannot scale, rather than letting the tests about fitting
 type quietly skip. The deployment shell scripts are checked with `shellcheck` in
 the same run, since a mistake in those surfaces at the range rather than here.
+
+Pushing a `v*` tag builds the SD card image with `image/build.sh`, checks it
+with `image/check.sh`, and attaches it to the release.
 
 ## Licence
 

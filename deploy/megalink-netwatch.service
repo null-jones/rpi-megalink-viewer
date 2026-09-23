@@ -9,8 +9,10 @@
 [Unit]
 Description=Megalink Wi-Fi hotspot fallback
 Documentation=https://github.com/null-jones/rpi-megalink-viewer
-After=NetworkManager.service
+After=NetworkManager.service cloud-init.target
 Wants=NetworkManager.service
+# After cloud-init, so a display named in Raspberry Pi Imager has that name by
+# the time its hotspot -- which is named after it -- is first made.
 # As for the display: never stop trying to restart. A display stuck without its
 # hotspot is one nobody can reach.
 StartLimitIntervalSec=0
