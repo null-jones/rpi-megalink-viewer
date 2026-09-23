@@ -267,19 +267,6 @@ def type_sizes(scale: float) -> dict[str, int]:
     return {role: max(8, round(size * scale)) for role, size in TYPE.items()}
 
 
-def _default_font(tkfont: Any, widget: Any) -> Any:
-    """Tk's own default font, on every Python this package supports.
-
-    ``nametofont`` only grew its ``root`` argument in Python 3.10. Without it
-    the font is looked up against the default interpreter, which is the same one
-    here -- this package never runs two -- so falling back costs nothing.
-    """
-    try:
-        return tkfont.nametofont("TkDefaultFont", root=widget)
-    except TypeError:  # Python 3.9
-        return tkfont.nametofont("TkDefaultFont")
-
-
 class TargetCanvas:
     """Draws a target face and the shots on it.
 
@@ -315,7 +302,7 @@ class TargetCanvas:
         from tkinter import font as tkfont
 
         if self._family is None:
-            self._family = _default_font(tkfont, self.widget).actual("family")
+            self._family = tkfont.nametofont("TkDefaultFont", root=self.widget).actual("family")
         made = tkfont.Font(
             root=self.widget,
             family=self._family,
@@ -630,7 +617,7 @@ class LaneWindow:
         # asking for it by family gets whatever the platform falls back to --
         # which on macOS is something sensible and on a bare X11 install can be
         # nothing at all, leaving every widget drawn but empty.
-        base = _default_font(tkfont, self.root)
+        base = tkfont.nametofont("TkDefaultFont", root=self.root)
         family = base.actual("family")
         return {
             role: tkfont.Font(

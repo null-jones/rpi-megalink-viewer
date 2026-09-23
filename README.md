@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/null-jones/rpi-megalink-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/null-jones/rpi-megalink-viewer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
 A per-firing-point score display for [Megalink Live](https://live.megalink.no/),
 small enough to run on a Raspberry Pi Zero 2 W.
@@ -14,7 +14,7 @@ on a screen beside them: the target face with their shots plotted on it, the
 running total, the clock, and how the group is sitting. Bolt it to the bench,
 give it power, and it comes up by itself.
 
-**No dependencies.** Python 3.9+ and the standard library — Tkinter for the
+**No dependencies.** Python 3.11+ and the standard library — Tkinter for the
 window, `http.server` for the configuration page, `urllib` for the feed. Nothing
 to compile, and nothing to break on an upgrade two years from now.
 
@@ -165,11 +165,11 @@ make test
 The suite needs no network: it runs against captured feeds from several real
 ranges in `tests/data/`.
 
-Every pull request runs the same checks on Python 3.9, 3.11 and 3.13 — the ends
-of the supported range, plus the 3.11 that Raspberry Pi OS Bookworm ships. The
-window is Tkinter, so CI opens a real X display with `xvfb` rather than letting
-the GUI tests quietly skip themselves; a silent skip of two hundred tests reads
-as a green build. The deployment shell scripts are checked with `shellcheck` in
+Every pull request runs the checks in Debian Bookworm and Trixie containers,
+with the Python and Tk each ships — which is what Raspberry Pi OS Bookworm and
+Trixie are built on, and so what a display actually runs. A step fails the build
+if the fonts there cannot scale, rather than letting the tests about fitting
+type quietly skip. The deployment shell scripts are checked with `shellcheck` in
 the same run, since a mistake in those surfaces at the range rather than here.
 
 ## Licence

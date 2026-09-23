@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .client import MegalinkClient, MegalinkError, Source
 from .config import Config, default_path, load

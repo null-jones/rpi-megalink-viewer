@@ -20,17 +20,12 @@ from megalink_viewer.models import LaneView, rank_on_relay
 
 tk = pytest.importorskip("tkinter", reason="Tkinter is not installed")
 
-#: PhotoImage only learned to read PNG in Tk 8.6. On an older Tk the display
-#: falls back to the idle message, which is the right thing to do and is tested
-#: separately -- but the tests that want a badge on screen cannot run there.
-needs_png = pytest.mark.skipif(tk.TkVersion < 8.6, reason="Tk before 8.6 cannot read PNG")
-
 
 def _tk_usable() -> bool:
     """Whether a Tk window can actually be created, checked out-of-process.
 
-    Some builds -- notably the macOS system Python 3.9 -- do not raise when Tk
-    is unusable, they abort the interpreter, which no ``try`` here could catch.
+    Some builds do not raise when Tk is unusable -- they abort the interpreter,
+    which no ``try`` here could catch.
     Probing in a subprocess keeps that crash out of this test run.
     """
     probe = "import tkinter; tkinter.Tk().destroy()"
@@ -92,11 +87,7 @@ def fonts_scale(widget) -> bool:
     """
     import tkinter.font as tkfont
 
-    from megalink_viewer.gui import _default_font
-
-    # Through the same helper the display uses: nametofont only took root= from
-    # Python 3.10, which is exactly the mistake this test was written with.
-    family = _default_font(tkfont, widget).actual("family")
+    family = tkfont.nametofont("TkDefaultFont", root=widget).actual("family")
     text = "594.8 (23x)"
     small = tkfont.Font(root=widget, family=family, size=10).measure(text)
     large = tkfont.Font(root=widget, family=family, size=40).measure(text)
@@ -563,7 +554,6 @@ class TestIdleOverlay:
         finally:
             win.close()
 
-    @needs_png
     def test_a_logo_is_shown_instead_of_the_message(self, gui, root, v2_state, tmp_path):
         from conftest import make_png
 
@@ -577,7 +567,6 @@ class TestIdleOverlay:
         finally:
             win.close()
 
-    @needs_png
     def test_a_logo_too_big_for_the_screen_is_shrunk(self, gui, root, v2_state, tmp_path):
         """Tk only scales by whole numbers, so a badge is subsampled to fit."""
         from conftest import make_png
@@ -596,7 +585,6 @@ class TestIdleOverlay:
         finally:
             win.close()
 
-    @needs_png
     def test_a_logo_smaller_than_the_screen_is_enlarged(self, gui, root, v2_state, tmp_path):
         """Only ever shrinking left a small badge stranded on a big screen."""
         from conftest import make_png

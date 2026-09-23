@@ -131,7 +131,10 @@ def _card_summary(raw: Any) -> list[tuple[str, Total]]:
     raw = raw if isinstance(raw, dict) else {}
     names = [strip_style(v).strip() for _, v in entries(raw.get("seriesName"))]
     totals = [parse_total(v) for _, v in entries(raw.get("seriesTotals"))]
-    return list(zip(names, totals))
+    # Not strict: a feed caught between two writes can briefly hold more names
+    # than totals, and that should show the pairs it has rather than take the
+    # display down.
+    return list(zip(names, totals, strict=False))
 
 
 def ranges(tree: dict[str, Any], key: str = "") -> list[RangeInfo]:

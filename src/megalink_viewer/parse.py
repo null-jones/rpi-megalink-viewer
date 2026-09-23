@@ -18,7 +18,7 @@ strings* rather than numbers, so almost every interesting value needs decoding:
 from __future__ import annotations
 
 import re
-from typing import Any, Union
+from typing import Any
 
 from .symbols import INNER_MARKERS, NON_SCORING, Symbol, lookup
 
@@ -32,7 +32,7 @@ _ISSF_TOTAL_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*-\s*(\d+)x\s*$", re.IGNORE
 #: ``"10.42s"`` -- an elapsed time rather than a score.
 _TIME_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*s\s*$", re.IGNORECASE)
 
-Number = Union[int, float]
+Number = int | float
 
 
 def strip_style(value: Any) -> str:

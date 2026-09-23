@@ -28,8 +28,8 @@ import os
 import shutil
 import subprocess
 import time
-from collections.abc import Sequence
-from typing import Any, Callable
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from .config import Config
 

@@ -21,7 +21,8 @@ import json
 import socket
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 #: Marker so a stray packet on this port is not mistaken for one of ours.
 MAGIC = "megalink-display"
@@ -288,7 +289,7 @@ class Listener:
             while not self._stop.is_set():
                 try:
                     raw, sender = sock.recvfrom(MAX_PACKET + 1)
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 except OSError:
                     return

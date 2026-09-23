@@ -87,35 +87,6 @@ jobs:
       - name: Tests
         run: xvfb-run -a uv run pytest -q
 
-  python-39:
-    # The oldest Python pyproject.toml still claims. Python 3.9 reached end of
-    # life in October 2025 and Pi OS Bullseye, which shipped it, in August 2026,
-    # so there is no Debian image left to test it in: this uses uv's build, and
-    # the type-fitting tests skip because its Tk cannot scale fonts.
-    name: Python 3.9 (end of life)
-    runs-on: ubuntu-latest
-    env:
-      UV_PYTHON: "3.9"
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install a virtual display
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb
-
-      - name: Install the project
-        run: uv sync --locked
-
-      - name: Tests
-        run: xvfb-run -a uv run pytest -q -rs
-
   shell:
     name: Deployment scripts
     runs-on: ubuntu-latest

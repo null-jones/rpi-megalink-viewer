@@ -17,13 +17,12 @@ the standard library, which is what makes it comfortable on a Pi Zero.
 from __future__ import annotations
 
 import json
-import socket
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator
-from typing import Any, Callable
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from . import v1, v2
 from .models import LaneView, RangeInfo
@@ -66,7 +65,7 @@ def get_json(base: str, path: str, shallow: bool = False, timeout: float = DEFAU
             return json.load(response)
     except urllib.error.HTTPError as exc:
         raise MegalinkError(f"{url} returned HTTP {exc.code}") from exc
-    except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+    except (urllib.error.URLError, TimeoutError) as exc:
         raise MegalinkError(f"could not reach {url}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise MegalinkError(f"{url} returned malformed JSON") from exc
@@ -135,7 +134,7 @@ def stream(
                         elif name in ("cancel", "auth_revoked"):
                             break
                         name = None
-        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError):
+        except (urllib.error.URLError, TimeoutError, OSError):
             pass
         if stop is not None and stop():
             return
