@@ -48,6 +48,9 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.ruff]
+# Vendored code is kept byte-for-byte as upstream publishes it, so it can be
+# replaced rather than merged when upstream changes.
+extend-exclude = ["src/megalink_viewer/_vendor"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]

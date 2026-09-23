@@ -64,17 +64,17 @@ class TestFeedUrl:
         config.display.url = "http://10.0.0.5:8080/#!/local/range"
         assert browser.feed_url(config) == "http://10.0.0.5:8080/#!/local/range"
 
-    def test_an_unconfigured_display_shows_its_own_setup_page(self):
-        # More use on a screen than an empty range list.
+    def test_an_unconfigured_display_shows_how_to_set_it_up(self):
+        # The instructions, not the settings form: nobody is at a keyboard.
         config = self.config()
         config.web.port = 8080
-        assert browser.feed_url(config) == "http://localhost:8080/"
+        assert browser.feed_url(config) == "http://localhost:8080/setup"
 
     def test_the_bound_port_is_preferred_over_the_configured_one(self):
         # web.port 0 means "ask the OS"; the real one is only known at runtime.
         config = self.config()
         config.web.port = 0
-        assert browser.feed_url(config, web_port=51234) == "http://localhost:51234/"
+        assert browser.feed_url(config, web_port=51234) == "http://localhost:51234/setup"
 
     def test_an_address_must_be_http(self):
         config = self.config()

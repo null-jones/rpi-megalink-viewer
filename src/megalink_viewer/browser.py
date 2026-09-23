@@ -59,8 +59,8 @@ def feed_url(config: Config, web_port: int = 0, lane: str | None = None) -> str:
     a local server rather than at Megalink's. Otherwise it is built from the
     club, range and firing point, in the form Megalink's own links use.
 
-    A display that has not been told what to show gets its own configuration
-    page, which is more use on a screen than an empty range list.
+    A display that has not been told what to show gets the page saying how to
+    set it up, which is more use on a screen than an empty range list.
     """
     override = (config.display.url or "").strip()
     if override:
@@ -69,7 +69,9 @@ def feed_url(config: Config, web_port: int = 0, lane: str | None = None) -> str:
     range_key = (config.range or "").strip()
     if not host or not range_key:
         port = web_port or config.web.port or 8080
-        return f"http://localhost:{port}/"
+        # The set-up instructions rather than the settings form: this is a
+        # screen with nobody at a keyboard in front of it.
+        return f"http://localhost:{port}/setup"
     url = f"{LIVE_URL}/#!/{host}/{range_key}"
     wanted = (config.lane if lane is None else lane) or ""
     wanted = str(wanted).strip()

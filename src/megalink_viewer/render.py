@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import time
+from typing import Any
 
 from .models import LaneResult, LaneView, Series
 
@@ -294,17 +295,59 @@ def frame(
     written one after another with no cursor control, so the output stays
     readable in a log.
     """
-    if not interactive:
-        lines = render_lane(view, width=width, age=age, color=color)
-        if extra:
-            lines.append(extra)
-        return "\n".join(lines) + "\n\n"
-
     lines = render_lane(view, width=width, age=age, color=color)
     if extra:
         lines.append(extra)
+    return compose(lines, height, interactive)
+
+
+def compose(lines: list[str], height: int, interactive: bool) -> str:
+    """Lines as one frame: drawn in place on a terminal, appended in a log."""
+    if not interactive:
+        return "\n".join(lines) + "\n\n"
     if len(lines) > height:
         lines = lines[:height]
     lines += [""] * (height - len(lines))
     screen = "\n".join(lines)
     return HOME + screen.replace("\n", CLEAR_TO_EOL + "\n") + CLEAR_BELOW
+
+
+def render_setup(
+    reach: Any,
+    width: int,
+    height: int,
+    name: str = "",
+    interactive: bool = False,
+) -> list[str]:
+    """What a console display with nothing configured shows instead.
+
+    The address, and on a real terminal a QR code of it underneath when there
+    is room -- drawn with background colours, which work on the Linux console
+    whatever font it has. Not in a log, where the colour codes would be noise.
+    """
+    from . import qr
+
+    url = reach.url() if reach is not None else None
+    lines = ["", "  SET UP THIS DISPLAY", ""]
+    if url is None:
+        lines += [
+            "  Waiting for a network…",
+            "",
+            "  This display is not on Wi-Fi yet.",
+            "  Check the network name and password.",
+        ]
+        return [_truncate(line, width) for line in lines]
+    lines += [f"  On a phone or laptop on the same network, open  {url}"]
+    local = reach.local_url()
+    if local:
+        lines.append(f"  (or {local})")
+    if name:
+        lines += ["", f"  This display is called {name}."]
+    lines = [_truncate(line, width) for line in lines]
+    if interactive:
+        code = qr.terminal(url)
+        columns = 2 * len(qr.modules(url))
+        if len(lines) + 1 + len(code) <= height and columns + 2 <= width:
+            margin = " " * max(2, (width - columns) // 2)
+            lines += [""] + [margin + row for row in code]
+    return lines

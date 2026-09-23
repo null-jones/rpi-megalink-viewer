@@ -27,10 +27,12 @@ its own server rather than from a browser page.
 from __future__ import annotations
 
 import hmac
+import html
 import threading
 import time
 from typing import Any
 
+from . import address, qr
 from .client import MegalinkError
 from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path, write_durably
 from .controller import Controller
@@ -86,6 +88,7 @@ def make_handler(
     controller: Controller,
     cache: _Cache | None = None,
     listener: Any = None,
+    find_reach: Any = None,
 ) -> type[JSONHandler]:
     """Build a request handler bound to one display.
 
@@ -220,6 +223,15 @@ def make_handler(
                 if answer is not None:
                     return answer
 
+            if path == "/setup" and method in ("GET", "HEAD"):
+                # What a browser-mode display shows while it has nothing else to:
+                # the same instructions as the window's set-up screen. The
+                # settings form itself would be no use on a screen with no
+                # keyboard in front of it.
+                bound = int(self.server.server_address[1])
+                self.send_html(200, setup_page(controller, find_reach, port=bound))
+                return None
+
             if path == "/healthz":
                 return 200, {"ok": True, "name": controller.config.name}
 
@@ -306,16 +318,77 @@ def make_handler(
     return Handler
 
 
+def setup_page(controller: Any, find_reach: Any = None, port: int | None = None) -> str:
+    """The set-up screen, as a page for a display running a browser.
+
+    Rebuilt on every request and told to reload itself, so it follows the
+    address as it changes -- and once the display is configured, the browser
+    is sent to the scores instead, and this page is simply never asked for.
+    """
+    # The port actually being listened on, which is the one that answers. The
+    # configured one can be 0, meaning "whatever the system gives".
+    if port is None:
+        port = controller.config.web.port if controller.config.web.enabled else 0
+    reach = (find_reach or address.find)(port)
+    url = reach.url() if port else None
+    name = html.escape(controller.config.name or reach.hostname)
+    if url is None:
+        body = (
+            "<h2>Waiting for a network…</h2>"
+            "<p>This display is not on Wi-Fi yet. Check the network name and password.</p>"
+        )
+    else:
+        local = reach.local_url()
+        body = (
+            f'<div class="row"><div class="code">{qr.svg(url)}</div><div>'
+            "<p class=lead>Scan with your phone, or open</p>"
+            f"<p class=url>{html.escape(url)}</p>"
+            + (f"<p class=muted>or {html.escape(local)}</p>" if local else "")
+            + "<p class=muted>Your phone must be on the same network.<br>"
+            f"This display is called {name}.</p></div></div>"
+        )
+    return SETUP_PAGE.replace("{{BODY}}", body)
+
+
+SETUP_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="5">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up this display</title>
+<style>
+html,body{margin:0;height:100%;background:#2b2b2b;color:#f2f2f2;
+  font-family:"DejaVu Sans",system-ui,sans-serif}
+main{min-height:100%;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2.5vh;padding:4vh 4vw;box-sizing:border-box}
+h1{font-size:8vh;margin:0}
+h2{font-size:5vh;margin:0}
+.row{display:flex;align-items:center;gap:4vw}
+.code{background:#fff;width:42vh;height:42vh;flex:none}
+.code svg{width:100%;height:100%;display:block}
+p{margin:.6vh 0;font-size:2.4vh}
+.lead{font-size:3.6vh;font-weight:bold}
+.url{font-size:3.4vh;font-weight:bold;color:#4aa3df}
+.muted{color:#9a9a9a}
+</style></head><body><main>
+<h1>Set up this display</h1>
+{{BODY}}
+</main></body></html>
+"""
+
+
 class ConfigServer:
     """Serves the configuration page for one display, in a background thread."""
 
-    def __init__(self, controller: Controller, listener: Any = None) -> None:
+    def __init__(
+        self, controller: Controller, listener: Any = None, find_reach: Any = None
+    ) -> None:
         self.controller = controller
         settings = controller.config.web
         #: The beacon listener behind ``/fleet``, if this display serves it.
         self.listener = listener
         self._server = Server(
-            (settings.bind, settings.port), make_handler(controller, listener=listener)
+            (settings.bind, settings.port),
+            make_handler(controller, listener=listener, find_reach=find_reach),
         )
         self._thread: threading.Thread | None = None
 

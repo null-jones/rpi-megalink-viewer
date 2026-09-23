@@ -1617,3 +1617,149 @@ class TestNoData:
             assert "waiting" in win._status.cget("text")
         finally:
             win.close()
+
+
+class TestSetupScreen:
+    """A display with nothing to show says how to set it up.
+
+    The person in front of it has probably never done this, and has no keyboard
+    to try anything with -- so the screen gives them an address and a code their
+    phone can scan, and nothing else.
+    """
+
+    URL = "http://192.168.1.23:8080/"
+
+    def reach(self, url_address="192.168.1.23", port=8080):
+        from megalink_viewer.address import Reach
+
+        addresses = [("wlan0", url_address)] if url_address else []
+        return Reach("fp-09", addresses, port, primary_address=url_address)
+
+    def window(self, gui, state, reach=None, calls=None):
+        def find(port):
+            if calls is not None:
+                calls.append(port)
+            return reach if reach is not None else self.reach(port=port)
+
+        win = gui.LaneWindow(state, "9", interval_ms=10_000, find_reach=find)
+        win.root.withdraw()
+        win.root.geometry("1280x720")
+        win.root.update_idletasks()
+        win.refresh(poll=False)
+        return win
+
+    def unconfigured(self, state):
+        state.config.host = ""
+        state.config.lane = ""
+        return state
+
+    def test_an_unconfigured_display_is_covered_by_the_setup_screen(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            assert win._setup.winfo_manager() == "place"
+            assert win._setup_url.cget("text") == self.URL
+        finally:
+            win.close()
+
+    def test_a_configured_display_is_not(self, gui, root, v2_state):
+        win = self.window(gui, v2_state)
+        try:
+            assert win._setup.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_the_local_name_is_offered_for_people(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            assert "fp-09.local" in win._setup_local.cget("text")
+        finally:
+            win.close()
+
+    def test_the_code_is_the_address_drawn_module_for_module(self, gui, root, v2_state):
+        from megalink_viewer import qr
+
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            canvas = win._setup_code
+            squares = [i for i in canvas.find_all() if canvas.type(i) == "rectangle"]
+            assert len(squares) == sum(sum(row) for row in qr.modules(self.URL))
+            # Every module the same whole number of pixels, or a scanner struggles.
+            sizes = {
+                (round(x1 - x0), round(y1 - y0))
+                for x0, y0, x1, y1 in (canvas.coords(i) for i in squares)
+            }
+            assert len(sizes) == 1
+            ((w, h),) = sizes
+            assert w == h and w >= 2
+        finally:
+            win.close()
+
+    def test_no_network_says_so_and_shows_no_code(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state), reach=self.reach(url_address=None))
+        try:
+            assert "Waiting for a network" in win._setup_lead.cget("text")
+            assert win._setup_code.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_a_display_with_its_page_turned_off_says_so(self, gui, root, v2_state):
+        state = self.unconfigured(v2_state)
+        state.config.web.enabled = False
+        win = self.window(gui, state)
+        try:
+            assert "no" in win._setup_lead.cget(
+                "text"
+            ) and "configuration page" in win._setup_lead.cget("text")
+        finally:
+            win.close()
+
+    def test_the_setup_screen_covers_the_idle_one(self, gui, root, v2_state):
+        # Not both: a display with no club has no position to be idle on.
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            assert win._setup.winfo_manager() == "place"
+            assert win._idle.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_the_address_is_not_looked_up_every_frame(self, gui, root, v2_state):
+        calls = []
+        win = self.window(gui, self.unconfigured(v2_state), calls=calls)
+        try:
+            for _ in range(5):
+                win.refresh(poll=False)
+            assert len(calls) == 1
+        finally:
+            win.close()
+
+    def test_the_code_is_not_redrawn_when_nothing_changed(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            before = win._setup_code.find_all()
+            win.refresh(poll=False)
+            assert win._setup_code.find_all() == before
+        finally:
+            win.close()
+
+    def test_setting_the_display_up_takes_the_screen_away(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state))
+        try:
+            v2_state.config.host = "stord-pk"
+            v2_state.config.lane = "9"
+            win.refresh(poll=False)
+            assert win._setup.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_an_idle_position_shows_where_its_settings_are(self, gui, root, v2_state):
+        # Lane 3 has nobody on it; somebody walking up may want to change it.
+        win = gui.LaneWindow(
+            v2_state, "3", interval_ms=10_000, find_reach=lambda port: self.reach(port=port)
+        )
+        win.root.withdraw()
+        try:
+            win.refresh(poll=False)
+            assert win._idle.winfo_manager() == "place"
+            assert win._idle_reach.cget("text") == f"Settings: {self.URL}"
+        finally:
+            win.close()

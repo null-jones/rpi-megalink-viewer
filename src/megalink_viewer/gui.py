@@ -21,6 +21,8 @@ import math
 import time
 from typing import Any
 
+from . import address as reach_module
+from . import qr
 from .models import LaneResult, LaneView, Series, rank_on_relay
 from .render import format_clock
 from .targets import TargetFace
@@ -94,6 +96,14 @@ FIT_FILL = 0.9
 CARD_PAD = 15
 #: A grid cell's internal padding, both sides together.
 CELL_PAD = 22
+
+#: How often the address shown for setting a display up is looked up again. It
+#: runs a command, and an address changes on the scale of minutes, not frames.
+REACH_INTERVAL_S = 5.0
+#: How much of the shorter side of the screen the setup code takes. Big enough
+#: to scan from the far side of a firing point, small enough to leave room for
+#: the address written out beside it.
+SETUP_CODE_SHARE = 0.42
 
 #: How often the relay standing is recomputed. Working it out means reading
 #: every other firing point on the range, and it need not keep up with the shots.
@@ -538,6 +548,7 @@ class LaneWindow:
         should_stop: Any = None,
         lane_source: Any = None,
         parent: Any = None,
+        find_reach: Any = None,
     ) -> None:
         tk, ttk, tkfont = _import_tk()
         self._tk = tk
@@ -587,6 +598,12 @@ class LaneWindow:
         self._scale = 1.0
         self._standing_at = float("-inf")
         self._standing_text = ""
+        #: How to work out this display's address; injectable for tests, which
+        #: should not depend on the network of whichever machine runs them.
+        self._find_reach = find_reach or reach_module.find
+        self._reach: Any = None
+        self._reach_at = float("-inf")
+        self._setup_drawn: tuple[str, int] | None = None
         self._last_size = (0, 0)
         self._build(tk, ttk)
         self._bind()
@@ -781,6 +798,58 @@ class LaneWindow:
         )
         self._logo_image: Any = None
         self._logo_source: tuple[str, float, int, int] | None = None
+
+        # Where to find this display's settings, small, for anyone who comes
+        # to change it. Only on the idle cover, where it is in nobody's way.
+        self._idle_reach = tk.Label(
+            self._idle, text="", bg=CHROME, fg=MUTED, font=self._fonts["subtitle"]
+        )
+
+        # A display that has not been told what to show. The whole screen goes
+        # to saying how to set it up, because the person looking at it has
+        # probably never done this before and has no keyboard to try things.
+        self._setup = tk.Frame(root, bg=CHROME)
+        stack = tk.Frame(self._setup, bg=CHROME)
+        stack.place(relx=0.5, rely=0.5, anchor="center")
+        self._setup_title = tk.Label(
+            stack, text="Set up this display", bg=CHROME, fg=CHROME_TEXT, font=self._fonts["total"]
+        )
+        self._setup_title.pack(pady=(0, 18))
+        row = tk.Frame(stack, bg=CHROME)
+        row.pack()
+        # White, and square: a scanner needs the light quiet zone round the code.
+        self._setup_code = tk.Canvas(row, bg="#ffffff", highlightthickness=0, width=1, height=1)
+        self._setup_code.pack(side="left", padx=(0, 28))
+        words = tk.Frame(row, bg=CHROME)
+        words.pack(side="left")
+        self._setup_lead = tk.Label(
+            words,
+            text="",
+            bg=CHROME,
+            fg=CHROME_TEXT,
+            font=self._fonts["shooter"],
+            justify="left",
+            anchor="w",
+        )
+        self._setup_lead.pack(anchor="w")
+        self._setup_url = tk.Label(
+            words, text="", bg=CHROME, fg=ACCENT, font=self._fonts["badge"], anchor="w"
+        )
+        self._setup_url.pack(anchor="w", pady=(10, 2))
+        self._setup_local = tk.Label(
+            words, text="", bg=CHROME, fg=MUTED, font=self._fonts["subtitle"], anchor="w"
+        )
+        self._setup_local.pack(anchor="w")
+        self._setup_note = tk.Label(
+            words,
+            text="",
+            bg=CHROME,
+            fg=MUTED,
+            font=self._fonts["subtitle"],
+            justify="left",
+            anchor="w",
+        )
+        self._setup_note.pack(anchor="w", pady=(16, 0))
 
         # Twenty screens in a row look alike; this is how the fleet dashboard
         # points at one of them.
@@ -1190,7 +1259,10 @@ class LaneWindow:
         self.root.update_idletasks()
         self._fit_type()
         self._fill_status()
-        self._show_idle(view)
+        # Set-up covers everything, idle included: a display with no club or
+        # firing point has no position to be idle on.
+        if not self._show_setup():
+            self._show_idle(view)
         self._show_identify()
 
     def _fill_clock(self, result: LaneResult | None) -> None:
@@ -1360,8 +1432,109 @@ class LaneWindow:
         where = range_.host_name if range_ is not None else ""
         self._idle_lane.configure(text=f"lane {view.lane}" + (f" · {where}" if where else ""))
         self._idle_lane.pack(pady=(8, 0))
+        url = self._current_reach().url() if self._web_port() else None
+        self._idle_reach.configure(text=f"Settings: {url}" if url else "")
+        self._idle_reach.place(relx=0.5, rely=0.97, anchor="s")
         self._idle.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._idle.lift()
+
+    def _web_port(self) -> int:
+        """The configuration page's port, or 0 when it is switched off."""
+        web = getattr(getattr(self._state, "config", None), "web", None)
+        if web is None or not getattr(web, "enabled", True):
+            return 0
+        return int(getattr(web, "port", 0) or 0)
+
+    def _current_reach(self) -> Any:
+        """Where this display can be reached, looked up at most every few seconds."""
+        now = time.monotonic()
+        if self._reach is None or now - self._reach_at >= REACH_INTERVAL_S:
+            self._reach_at = now
+            try:
+                self._reach = self._find_reach(self._web_port())
+            except Exception:  # pragma: no cover - defensive
+                self._reach = reach_module.Reach("", [], self._web_port())
+        return self._reach
+
+    def _show_setup(self) -> bool:
+        """Cover the screen with how to set it up, when there is nothing to show.
+
+        Returns whether it is showing. The code goes to the address rather than
+        the ``.local`` name, which plenty of phones cannot resolve.
+        """
+        config = getattr(self._state, "config", None)
+        if config is None or getattr(config, "configured", True):
+            self._setup.place_forget()
+            return False
+
+        port = self._web_port()
+        reach = self._current_reach()
+        url = reach.url() if port else None
+        name = getattr(config, "name", "") or reach.hostname
+
+        if not port:
+            self._setup_lead.configure(text="This display has no\nconfiguration page.")
+            self._setup_url.configure(text="")
+            self._setup_local.configure(text="")
+            self._setup_note.configure(text="Turn it on with web.enabled in its settings file.")
+            self._draw_setup_code(None)
+        elif url is None:
+            self._setup_lead.configure(text="Waiting for a network…")
+            self._setup_url.configure(text="")
+            self._setup_local.configure(text="")
+            self._setup_note.configure(
+                text="This display is not on Wi-Fi yet.\nCheck the network name and password."
+            )
+            self._draw_setup_code(None)
+        else:
+            self._setup_lead.configure(text="Scan with your phone,\nor open")
+            self._setup_url.configure(text=url)
+            local = reach.local_url()
+            self._setup_local.configure(text=f"or {local}" if local else "")
+            self._setup_note.configure(
+                text=f"Your phone must be on the same network.\nThis display is called {name}."
+            )
+            self._draw_setup_code(url)
+
+        self._setup.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._setup.lift()
+        return True
+
+    def _draw_setup_code(self, text: str | None) -> None:
+        """Draw ``text`` as a QR code, or clear the code away.
+
+        Whole pixels to a module, so every module comes out the same size -- a
+        scanner copes with a code that is slightly too small much better than
+        with one whose modules are uneven.
+        """
+        canvas = self._setup_code
+        if not text:
+            canvas.pack_forget()
+            self._setup_drawn = None
+            return
+        width, height = self.root.winfo_width(), self.root.winfo_height()
+        side = int(min(width, height) * SETUP_CODE_SHARE) if width > 1 and height > 1 else 300
+        if self._setup_drawn == (text, side):
+            return
+        grid = qr.modules(text)
+        cell = max(2, side // len(grid))
+        span = cell * len(grid)
+        canvas.delete("all")
+        canvas.configure(width=span, height=span)
+        for y, row in enumerate(grid):
+            for x, dark in enumerate(row):
+                if dark:
+                    canvas.create_rectangle(
+                        x * cell,
+                        y * cell,
+                        (x + 1) * cell,
+                        (y + 1) * cell,
+                        fill="#000000",
+                        outline="",
+                    )
+        if not canvas.winfo_ismapped():
+            canvas.pack(side="left", padx=(0, 28), before=canvas.master.winfo_children()[-1])
+        self._setup_drawn = (text, side)
 
     def _show_identify(self) -> None:
         """Flash the display's name when it has been asked to identify itself."""

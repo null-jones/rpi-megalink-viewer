@@ -568,3 +568,66 @@ class TestTokenComparison:
         controller, server, _path = display
         controller.write(controller.config.merged({"web": {"token": "right"}}))
         assert request(server, "/api/config", "PUT", {"lane": "2"}, token="right")[0] == 200
+
+
+class TestSetupPage:
+    """What a browser-mode display shows while it has nothing else to."""
+
+    @pytest.fixture
+    def unconfigured(self, config_path, fake_client):
+        from megalink_viewer.address import Reach
+
+        config = Config()
+        config.web.port = 0
+        config.web.bind = "127.0.0.1"
+        config.beacon.enabled = False
+        save(config, config_path)
+        controller = Controller(path=config_path, client=fake_client)
+        controller.reload()
+        reach = {"value": Reach("fp-09", [("wlan0", "192.168.1.23")], 8080, "192.168.1.23")}
+        server = ConfigServer(controller, find_reach=lambda port: reach["value"]).start()
+        yield server, reach
+        server.stop()
+        controller.stop()
+
+    def page(self, server):
+        url = f"http://127.0.0.1:{server.port}/setup"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.status, response.headers.get_content_type(), response.read().decode()
+
+    def test_it_is_a_page(self, unconfigured):
+        server, _reach = unconfigured
+        status, kind, _body = self.page(server)
+        assert (status, kind) == (200, "text/html")
+
+    def test_it_gives_the_address(self, unconfigured):
+        server, _reach = unconfigured
+        assert "http://192.168.1.23:8080/" in self.page(server)[2]
+
+    def test_it_carries_the_code_inline(self, unconfigured):
+        # Inline, so a browser with no route anywhere can still draw it.
+        body = self.page(server := unconfigured[0])[2]
+        assert "<svg" in body and "crispEdges" in body
+        assert server
+
+    def test_it_reloads_itself(self, unconfigured):
+        # So it follows the address, and gives way once the display is set up.
+        assert 'http-equiv="refresh"' in self.page(unconfigured[0])[2]
+
+    def test_with_no_network_it_says_so(self, unconfigured):
+        from megalink_viewer.address import Reach
+
+        server, reach = unconfigured
+        reach["value"] = Reach("fp-09", [], 8080)
+        body = self.page(server)[2]
+        assert "Waiting for a network" in body
+        assert "<svg" not in body
+
+    def test_names_are_escaped(self, unconfigured, config_path):
+        # The display name is set by whoever configures it, and goes into HTML.
+        server, _reach = unconfigured
+        controller_config = load(config_path)
+        controller_config.beacon.name = "<script>alert(1)</script>"
+        save(controller_config, config_path)
+        body = self.page(server)[2]
+        assert "<script>alert" not in body

@@ -67,6 +67,12 @@ That copies this checkout over SSH â€” no GitHub credentials ever go on the Pi â
 installs it, and sets up a boot service. The Pi comes up showing firing point 9
 and keeps doing it through reboots and power cuts.
 
+**A display that hasn't been set up says how.** Instead of an empty card it
+shows its address and a QR code: scan it with a phone on the same network and
+you land on its settings page, where the club, range and firing point are picked
+from lists. The code carries the IP address rather than the `.local` name, which
+plenty of phones can't resolve. The console and browser modes show the same.
+
 Add `TOKEN=some-secret` to lock the displays down. Give every display on a range
 the same one, so they can manage each other.
 
