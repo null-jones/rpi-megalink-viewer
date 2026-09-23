@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from typing import ClassVar
 
 import pytest
 
@@ -631,3 +632,120 @@ class TestSetupPage:
         save(controller_config, config_path)
         body = self.page(server)[2]
         assert "<script>alert" not in body
+
+
+class TestWifi:
+    """Choosing the display's network from its settings page."""
+
+    STATUS: ClassVar[dict] = {
+        "mode": "hotspot",
+        "hotspot": {"ssid": "Megalink fp-09", "password": "7kqm-xw4p-9ht2", "address": "10.42.0.1"},
+        "networks": [{"ssid": "Range", "signal": 70, "secure": True}],
+        "joining": "",
+        "error": "",
+    }
+
+    @pytest.fixture
+    def served(self, config_path, fake_client):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.web.port = 0
+        config.web.bind = "127.0.0.1"
+        config.beacon.enabled = False
+        save(config, config_path)
+        controller = Controller(path=config_path, client=fake_client)
+        controller.reload()
+        status = {"value": dict(self.STATUS)}
+        server = ConfigServer(controller, read_network=lambda: status["value"]).start()
+        yield controller, server, status, config_path
+        server.stop()
+        controller.stop()
+
+    def test_the_networks_it_can_see_are_listed(self, served):
+        _c, server, _s, _p = served
+        _code, body = request(server, "/api/wifi")
+        assert body["available"] and body["mode"] == "hotspot"
+        assert body["networks"][0]["ssid"] == "Range"
+
+    def test_no_password_is_handed_out(self, served):
+        # Not the hotspot's, and never one being joined.
+        _c, server, _s, _p = served
+        _code, body = request(server, "/api/wifi")
+        assert "7kqm-xw4p-9ht2" not in json.dumps(body)
+
+    def test_a_display_without_the_service_says_so(self, served):
+        _c, server, status, _p = served
+        status["value"] = None
+        assert request(server, "/api/wifi")[1] == {"available": False}
+
+    def test_joining_leaves_a_request_beside_the_configuration(self, served):
+        _c, server, _s, path = served
+        code, body = request(
+            server, "/api/wifi", "POST", {"ssid": "Range", "password": "secret-pass"}
+        )
+        assert code == 200 and body["queued"]
+        left = path.parent / "wifi-request.json"
+        assert json.loads(left.read_text()) == {"ssid": "Range", "password": "secret-pass"}
+
+    def test_the_request_is_private(self, served):
+        import os
+        import stat
+
+        _c, server, _s, path = served
+        request(server, "/api/wifi", "POST", {"ssid": "Range", "password": "secret-pass"})
+        mode = stat.S_IMODE(os.stat(path.parent / "wifi-request.json").st_mode)
+        assert mode == 0o600
+
+    def test_an_open_network_needs_no_password(self, served):
+        _c, server, _s, _p = served
+        assert request(server, "/api/wifi", "POST", {"ssid": "CRPC Guest"})[0] == 200
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"ssid": "", "password": "secret-pass"},
+            {"ssid": "x" * 33, "password": "secret-pass"},
+            {"ssid": "Range", "password": "short"},
+            {"ssid": "Range", "password": "x" * 64},  # 64, but not hex
+        ],
+    )
+    def test_what_wpa_would_refuse_is_refused_here(self, served, payload):
+        # Told now, rather than half a minute after being disconnected.
+        _c, server, _s, path = served
+        assert expect_error(server, "/api/wifi", "POST", payload)[0] == 400
+        assert not (path.parent / "wifi-request.json").exists()
+
+    def test_a_raw_sixty_four_character_key_is_allowed(self, served):
+        _c, server, _s, _p = served
+        assert (
+            request(server, "/api/wifi", "POST", {"ssid": "Range", "password": "a" * 64})[0] == 200
+        )
+
+    def test_joining_needs_the_token(self, served):
+        controller, server, _s, _p = served
+        controller.write(controller.config.merged({"web": {"token": "shared"}}))
+        payload = {"ssid": "Range", "password": "secret-pass"}
+        assert expect_error(server, "/api/wifi", "POST", payload)[0] == 403
+        assert request(server, "/api/wifi", "POST", payload, token="shared")[0] == 200
+
+    def test_joining_cannot_be_forged_from_another_site(self, served):
+        # Of everything on the page this is the one that most wants protecting:
+        # it moves the display to a network of the sender's choosing.
+        _c, server, _s, path = served
+        forged = urllib.request.Request(
+            f"http://127.0.0.1:{server.port}/api/wifi",
+            data=json.dumps({"ssid": "Evil", "password": "12345678"}).encode(),
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(forged, timeout=10)
+        assert caught.value.code == 415
+        assert not (path.parent / "wifi-request.json").exists()
+
+    def test_the_setup_page_gives_both_steps_on_the_hotspot(self, served):
+        _c, server, _s, _p = served
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.port}/setup", timeout=10) as r:
+            body = r.read().decode()
+        assert "1. Join its Wi-Fi" in body and "Megalink fp-09" in body
+        assert f"http://10.42.0.1:{server.port}/" in body
+        assert body.count("<svg") == 2

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from megalink_viewer import v1, v2
 from megalink_viewer.models import LaneView
 from megalink_viewer.render import (
@@ -176,3 +178,37 @@ class TestFrame:
         view = v2.lane_view(v2_pistol, "1-10", "9")
         out = frame(view, width=80, height=24, extra="the feed is unreachable")
         assert "the feed is unreachable" in out
+
+
+class TestHotspotOnTheConsole:
+    SPOT: ClassVar[dict[str, str]] = {
+        "ssid": "Megalink fp-09",
+        "password": "7kqm-xw4p-9ht2",
+        "address": "10.42.0.1",
+    }
+
+    def reach(self):
+        from megalink_viewer.address import Reach
+
+        return Reach("fp-09", [("wlan0", "10.42.0.1")], 8080)
+
+    def test_it_gives_both_steps(self):
+        from megalink_viewer.render import render_setup
+
+        text = "\n".join(render_setup(self.reach(), 120, 60, hotspot=self.SPOT))
+        assert "Megalink fp-09" in text and "7kqm-xw4p-9ht2" in text
+        assert "http://10.42.0.1:8080/" in text
+
+    def test_the_code_is_for_joining_the_network(self):
+        from megalink_viewer import qr
+        from megalink_viewer.render import render_setup
+
+        lines = render_setup(self.reach(), 120, 60, interactive=True, hotspot=self.SPOT)
+        code = qr.terminal(qr.wifi("Megalink fp-09", "7kqm-xw4p-9ht2"))
+        assert code[0] in "".join(lines)
+
+    def test_no_code_in_a_log(self):
+        from megalink_viewer.render import render_setup
+
+        lines = render_setup(self.reach(), 120, 60, interactive=False, hotspot=self.SPOT)
+        assert not any("\x1b[" in line for line in lines)

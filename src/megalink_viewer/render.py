@@ -318,6 +318,7 @@ def render_setup(
     height: int,
     name: str = "",
     interactive: bool = False,
+    hotspot: dict[str, Any] | None = None,
 ) -> list[str]:
     """What a console display with nothing configured shows instead.
 
@@ -327,6 +328,8 @@ def render_setup(
     """
     from . import qr
 
+    if hotspot:
+        return _render_hotspot(hotspot, reach, width, height, interactive)
     url = reach.url() if reach is not None else None
     lines = ["", "  SET UP THIS DISPLAY", ""]
     if url is None:
@@ -347,6 +350,40 @@ def render_setup(
     if interactive:
         code = qr.terminal(url)
         columns = 2 * len(qr.modules(url))
+        if len(lines) + 1 + len(code) <= height and columns + 2 <= width:
+            margin = " " * max(2, (width - columns) // 2)
+            lines += [""] + [margin + row for row in code]
+    return lines
+
+
+def _render_hotspot(
+    spot: dict[str, Any], reach: Any, width: int, height: int, interactive: bool
+) -> list[str]:
+    """The console's set-up screen on the display's own Wi-Fi.
+
+    Only one code fits on a console, so it is the one for joining the network:
+    that is the hard step, and the address after it is short enough to type.
+    """
+    from . import qr
+
+    ssid, password = str(spot.get("ssid", "")), str(spot.get("password", ""))
+    port = reach.port if reach is not None else 8080
+    url = f"http://{spot.get('address') or '10.42.0.1'}{'' if port == 80 else f':{port}'}/"
+    lines = [
+        "",
+        "  CONNECT TO THIS DISPLAY",
+        "",
+        f"  1. Join its Wi-Fi:  {ssid}",
+        f"     password:        {password}" if password else "     (no password)",
+        f"  2. Then open        {url}",
+        "",
+        "  Your phone may say there is no internet; stay connected anyway.",
+    ]
+    lines = [_truncate(line, width) for line in lines]
+    if interactive:
+        text = qr.wifi(ssid, password)
+        code = qr.terminal(text)
+        columns = 2 * len(qr.modules(text))
         if len(lines) + 1 + len(code) <= height and columns + 2 <= width:
             margin = " " * max(2, (width - columns) // 2)
             lines += [""] + [margin + row for row in code]

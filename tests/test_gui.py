@@ -11,6 +11,7 @@ import gc
 import math
 import subprocess
 import sys
+from typing import Any, ClassVar
 
 import pytest
 
@@ -1761,5 +1762,102 @@ class TestSetupScreen:
             win.refresh(poll=False)
             assert win._idle.winfo_manager() == "place"
             assert win._idle_reach.cget("text") == f"Settings: {self.URL}"
+        finally:
+            win.close()
+
+
+class TestHotspotScreen:
+    """On its own Wi-Fi, a display gives the two steps to reach it."""
+
+    SPOT: ClassVar[dict[str, Any]] = {
+        "mode": "hotspot",
+        "hotspot": {"ssid": "Megalink fp-09", "password": "7kqm-xw4p-9ht2", "address": "10.42.0.1"},
+    }
+
+    def window(self, gui, state, status):
+        from megalink_viewer.address import Reach
+
+        win = gui.LaneWindow(
+            state,
+            "9",
+            interval_ms=10_000,
+            find_reach=lambda port: Reach("fp-09", [("wlan0", "10.42.0.1")], port),
+            read_network=lambda: status,
+        )
+        win.root.withdraw()
+        win.root.geometry("1280x720")
+        win.root.update_idletasks()
+        win.refresh(poll=False)
+        return win
+
+    def codes(self, canvas):
+        return len([i for i in canvas.find_all() if canvas.type(i) == "rectangle"])
+
+    def test_a_configured_display_on_its_hotspot_still_shows_how_to_reach_it(
+        self, gui, root, v2_state
+    ):
+        # It cannot show scores while it is off the network.
+        win = self.window(gui, v2_state, self.SPOT)
+        try:
+            assert win._setup.winfo_manager() == "place"
+            assert win._setup_title.cget("text") == "Connect to this display"
+        finally:
+            win.close()
+
+    def test_step_one_is_joining_the_hotspot(self, gui, root, v2_state):
+        from megalink_viewer import qr
+
+        win = self.window(gui, v2_state, self.SPOT)
+        try:
+            assert win._setup_url.cget("text") == "Megalink fp-09"
+            assert "7kqm-xw4p-9ht2" in win._setup_local.cget("text")
+            # A code a phone's camera joins the network from.
+            wifi = qr.wifi("Megalink fp-09", "7kqm-xw4p-9ht2")
+            assert self.codes(win._setup_code) == sum(sum(row) for row in qr.modules(wifi))
+        finally:
+            win.close()
+
+    def test_step_two_is_opening_the_settings_on_it(self, gui, root, v2_state):
+        from megalink_viewer import qr
+
+        win = self.window(gui, v2_state, self.SPOT)
+        try:
+            url = "http://10.42.0.1:8080/"
+            assert url in win._setup_step2.cget("text")
+            assert win._setup_code2.winfo_manager() == "grid"
+            assert self.codes(win._setup_code2) == sum(sum(row) for row in qr.modules(url))
+        finally:
+            win.close()
+
+    def test_off_the_hotspot_the_second_step_goes(self, gui, root, v2_state):
+        v2_state.config.host = ""
+        win = self.window(gui, v2_state, {"mode": "client", "hotspot": None})
+        try:
+            assert win._setup.winfo_manager() == "place"  # still unconfigured
+            assert win._setup_code2.winfo_manager() == ""
+            assert win._setup_step2.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_a_configured_display_on_a_network_is_left_alone(self, gui, root, v2_state):
+        win = self.window(gui, v2_state, {"mode": "client", "hotspot": None})
+        try:
+            assert win._setup.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_no_hotspot_service_at_all_is_left_alone(self, gui, root, v2_state):
+        # A machine without it -- a laptop, an older install.
+        win = self.window(gui, v2_state, None)
+        try:
+            assert win._setup.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_an_open_hotspot_says_so(self, gui, root, v2_state):
+        spot = {"mode": "hotspot", "hotspot": {"ssid": "Megalink fp-09", "password": ""}}
+        win = self.window(gui, v2_state, spot)
+        try:
+            assert win._setup_local.cget("text") == "no password"
         finally:
             win.close()

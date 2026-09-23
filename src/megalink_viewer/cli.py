@@ -528,6 +528,37 @@ def _why_stopped(stopping: StopFlag, otherwise: str) -> str:
     return f"stopping: {stopping.reason}" if stopping.reason else f"stopping: {otherwise}"
 
 
+def cmd_netwatch(args: argparse.Namespace, client: MegalinkClient) -> int:
+    """Fall back to a Wi-Fi hotspot when there is no network. Runs as root.
+
+    Its own service rather than part of the display, so the display never has
+    the privileges changing the network needs.
+    """
+    from . import network
+    from .config import default_path, load
+
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        print("megalink: netwatch changes the network, so it must run as root", file=sys.stderr)
+        return 2
+    path = Path(args.config) if args.config else default_path()
+    try:
+        name = load(path).name
+    except ConfigError:
+        name = ""
+    stopping = stop_flag()
+    # Beside the display's own configuration, which is where its settings page
+    # leaves a network to join and the one directory both services can reach.
+    network.run(
+        network.NetworkManager(interface=args.interface),
+        stop=stopping,
+        name=name,
+        report=lambda message: print(f"netwatch: {message}", file=sys.stderr, flush=True),
+        request_path=path.parent / "wifi-request.json",
+        secret_path=path.parent / "hotspot.json",
+    )
+    return 0
+
+
 def cmd_fleet(args: argparse.Namespace, client: MegalinkClient) -> int:
     """Serve the dashboard that lists every display on this network."""
     from .fleet import FleetServer
@@ -692,6 +723,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     display.add_argument("--config", help="path to the configuration file")
     display.set_defaults(func=cmd_display)
+
+    netwatch = sub.add_parser(
+        "netwatch",
+        parents=[common],
+        help="start a Wi-Fi hotspot when there is no network (runs as root)",
+    )
+    netwatch.add_argument("--config", help="path to the display's configuration file")
+    netwatch.add_argument("--interface", default="wlan0", help="the Wi-Fi interface")
+    netwatch.set_defaults(func=cmd_netwatch)
 
     fleet = sub.add_parser(
         "fleet", parents=[common], help="dashboard listing every display on this network"

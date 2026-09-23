@@ -347,22 +347,25 @@ def run_terminal(
     each frame is drawn over the last one; otherwise they are written in
     sequence, which is what a log wants.
     """
-    from . import address
+    from . import address, network
     from .render import CLEAR_SCREEN, HIDE_CURSOR, SHOW_CURSOR, compose, frame, render_setup
 
     if interactive:
         write(HIDE_CURSOR + CLEAR_SCREEN)
-    reach, reach_at = None, float("-inf")
+    reach, reach_at, spot = None, float("-inf"), None
     try:
         while stop is None or not stop():
             config = controller.config
-            if not config.configured:
-                # Where to set it up, looked up now and then: it runs a command,
-                # and an address does not change from one frame to the next.
-                if time.monotonic() - reach_at >= 5.0:
-                    reach_at = time.monotonic()
+            # Where to set it up, looked up now and then: it runs a command, and
+            # an address does not change from one frame to the next.
+            if time.monotonic() - reach_at >= 5.0:
+                reach_at = time.monotonic()
+                status = network.read_status() or {}
+                spot = status.get("hotspot") if status.get("mode") == "hotspot" else None
+                if not config.configured or spot:
                     reach = address.find(config.web.port if config.web.enabled else 0)
-                lines = render_setup(reach, width, height, config.name, interactive)
+            if not config.configured or spot:
+                lines = render_setup(reach, width, height, config.name, interactive, hotspot=spot)
                 write(compose(lines, height, interactive))
                 time.sleep(interval)
                 continue

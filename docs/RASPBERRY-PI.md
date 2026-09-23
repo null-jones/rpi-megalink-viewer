@@ -617,3 +617,47 @@ lifecycle are covered by tests, but no Pi 4 or Pi 5 has run this yet. The first
 thing to check is that both windows land on their own monitor rather than
 stacking on one, and `xrandr --listmonitors` on the machine itself is the place
 to start if they do not.
+
+---
+
+## When the Wi-Fi is wrong: the fallback hotspot
+
+A display that boots somewhere its Wi-Fi is not would otherwise be a dead screen
+that only a keyboard and some knowledge can fix. So `megalink-netwatch`, a second
+service, watches for that:
+
+| | |
+|---|---|
+| **30 s after boot** with no network | it starts its own Wi-Fi, `Megalink <name>`, and the screen shows how to join it |
+| **2 min after a working network drops** | the same — longer, because a range's router restarting takes a minute or two |
+| **every 5 min on its own Wi-Fi** | it steps aside for 30 s to look for a network it knows — *only if no phone is connected*, so nobody is cut off halfway through |
+| **a network chosen on the settings page** | it tries it for 45 s; if that fails, its own Wi-Fi comes back and the page says why |
+
+The screen shows two codes: one a phone's camera joins the network from, and one
+that opens the settings page on it (`http://10.42.0.1:8080/`). Phones usually say
+the network has no internet; staying connected is fine.
+
+The hotspot's password is made once, from letters that cannot be mistaken for
+one another, and kept in `/etc/megalink/hotspot.json` — so a sticker on the back
+of a display stays true.
+
+**How it is built.** It runs as root because changing the network needs it, and
+the display should never have that. They talk through files: the settings page
+leaves a network in `/etc/megalink/wifi-request.json` (readable only by its
+owner, since it holds a password), and netwatch leaves what it is doing in
+`/run/megalink/network.json` for the display to show. Passwords go into
+NetworkManager's own connection files, never onto an `nmcli` command line, where
+any process can read them while the command runs. Every connection it creates
+is named `megalink …`, so it never touches one a person or Imager set up.
+
+Protected management frames are switched off on the hotspot: the Pi's Wi-Fi
+firmware will not run an access point with them, and NetworkManager trying them
+by default is a known reason a Pi's hotspot never appears.
+
+**Not yet run on a Pi.** The decisions are tested against a pretend clock, the
+screens were scanned from screenshots, and NetworkManager 1.52 accepted every
+connection file it writes (checked with `nmcli --offline`). What only hardware
+can show is the Wi-Fi chip actually running the hotspot. If it does not appear,
+`journalctl -u megalink-netwatch` says what netwatch tried, and
+`journalctl -u NetworkManager` what NetworkManager made of it.
+

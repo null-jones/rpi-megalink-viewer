@@ -73,6 +73,13 @@ you land on its settings page, where the club, range and firing point are picked
 from lists. The code carries the IP address rather than the `.local` name, which
 plenty of phones can't resolve. The console and browser modes show the same.
 
+**A display that can't find its Wi-Fi makes its own.** If it isn't on a
+network 30 seconds after booting — a new range, a changed password, a card
+flashed without Wi-Fi — it starts a Wi-Fi network of its own and shows two codes:
+one that joins it, one that opens the settings page, where you pick the real
+network from a list. Every few minutes, with nobody connected, it looks again
+for a network it already knows.
+
 Add `TOKEN=some-secret` to lock the displays down. Give every display on a range
 the same one, so they can manage each other.
 

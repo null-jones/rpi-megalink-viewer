@@ -267,6 +267,9 @@ button.ghost{background:#3a3d41;color:var(--text)}
 .note{margin-top:.7rem;font-size:.86rem;min-height:1.2rem}
 .ok{color:var(--good)}.err{color:var(--bad)}
 .empty{color:var(--muted);padding:.6rem .2rem}
+/* The hidden attribute loses to any display rule of the page's own, which
+   left fields showing that the script had hidden. */
+[hidden]{display:none!important}
 </style></head><body><main>
 <h1>Megalink displays</h1>
 <div class="sub" id="count">listening…</div>

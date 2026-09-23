@@ -52,7 +52,9 @@ MIN_RUN_SECONDS = 5.0
 RESTART_DELAY = 3.0
 
 
-def feed_url(config: Config, web_port: int = 0, lane: str | None = None) -> str:
+def feed_url(
+    config: Config, web_port: int = 0, lane: str | None = None, hotspot: bool = False
+) -> str:
     """The page this display should show.
 
     An explicit ``display.url`` wins, which is how a range points its screens at
@@ -62,13 +64,17 @@ def feed_url(config: Config, web_port: int = 0, lane: str | None = None) -> str:
     A display that has not been told what to show gets the page saying how to
     set it up, which is more use on a screen than an empty range list.
     """
+    port = web_port or config.web.port or 8080
+    if hotspot:
+        # On its own Wi-Fi the display can reach nothing, Megalink included;
+        # the one useful page is the one saying how to get it back on a network.
+        return f"http://localhost:{port}/setup"
     override = (config.display.url or "").strip()
     if override:
         return override
     host = (config.host or "").strip()
     range_key = (config.range or "").strip()
     if not host or not range_key:
-        port = web_port or config.web.port or 8080
         # The set-up instructions rather than the settings form: this is a
         # screen with nobody at a keyboard in front of it.
         return f"http://localhost:{port}/setup"
@@ -173,6 +179,7 @@ class BrowserDisplay:
         screen: Any = None,
         lane_source: Callable[[], str] | None = None,
         profile: str = "/tmp/megalink-browser",
+        read_network: Callable[[], Any] | None = None,
     ) -> None:
         self._controller = controller
         self._should_stop = should_stop or (lambda: False)
@@ -189,6 +196,7 @@ class BrowserDisplay:
         #: Chromium shares one window per profile, so a second pane needs a
         #: profile of its own or it opens a tab in the first one instead.
         self._profile = profile
+        self._read_network = read_network
 
     @staticmethod
     def _default_spawn(command: list[str]) -> Any:  # pragma: no cover - needs a browser
@@ -204,7 +212,16 @@ class BrowserDisplay:
         lane = None
         if self._lane_source is not None:
             lane = self._lane_source()
-        return feed_url(self._controller.config, web_port=port, lane=lane)
+        status = self._network_status() or {}
+        on_hotspot = status.get("mode") == "hotspot"
+        return feed_url(self._controller.config, web_port=port, lane=lane, hotspot=on_hotspot)
+
+    def _network_status(self) -> Any:
+        if self._read_network is not None:
+            return self._read_network()
+        from . import network
+
+        return network.read_status()
 
     def start(self, url: str) -> None:
         """Put a page on the screen, replacing whatever is there."""

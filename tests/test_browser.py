@@ -337,3 +337,28 @@ class TestBrowserDisplay:
         process.terminate = lambda: (_ for _ in ()).throw(OSError("stubborn"))
         shown.stop_browser()
         assert "kill" in process.signals
+
+
+class TestOnTheHotspot:
+    def test_it_shows_how_to_reach_the_display_not_the_feed(self):
+        # On its own Wi-Fi the display can reach nothing, Megalink included.
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.web.port = 8080
+        assert browser.feed_url(config, hotspot=True) == "http://localhost:8080/setup"
+
+    def test_even_a_page_it_was_told_to_show(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.display.url = "http://10.0.0.5/"
+        config.web.port = 8080
+        assert browser.feed_url(config, hotspot=True).endswith("/setup")
+
+    def test_the_supervisor_follows_the_hotspot(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.web.port = 8080
+        status = {"value": {"mode": "client"}}
+        shown = browser.BrowserDisplay(
+            FakeController(config), browser="/c", read_network=lambda: status["value"]
+        )
+        assert shown.wanted_url().endswith("/1-10/9")
+        status["value"] = {"mode": "hotspot"}
+        assert shown.wanted_url().endswith("/setup")

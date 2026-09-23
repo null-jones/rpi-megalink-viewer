@@ -32,7 +32,7 @@ import threading
 import time
 from typing import Any
 
-from . import address, qr
+from . import address, network, qr
 from .client import MegalinkError
 from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path, write_durably
 from .controller import Controller
@@ -89,6 +89,7 @@ def make_handler(
     cache: _Cache | None = None,
     listener: Any = None,
     find_reach: Any = None,
+    read_network: Any = None,
 ) -> type[JSONHandler]:
     """Build a request handler bound to one display.
 
@@ -153,6 +154,47 @@ def make_handler(
             self._send(
                 200, body, LOGO_SUFFIXES.get(path.suffix.lower(), "application/octet-stream")
             )
+
+        def _wifi_status(self) -> dict[str, Any]:
+            """What the hotspot fallback is doing, for the settings page.
+
+            No password in it -- not the hotspot's, which whoever is reading
+            this has already used, and never one being joined.
+            """
+            status = (read_network or network.read_status)()
+            if not isinstance(status, dict):
+                return {"available": False}
+            return {
+                "available": True,
+                "mode": status.get("mode", ""),
+                "joining": status.get("joining", ""),
+                "error": status.get("error", ""),
+                "networks": status.get("networks") or [],
+                "hotspot": (status.get("hotspot") or {}).get("ssid", ""),
+            }
+
+        def _join_wifi(self, payload: Any) -> dict[str, Any]:
+            """Leave a network for the hotspot service to join.
+
+            Checked here, where the person who typed it can be told, rather than
+            left to fail half a minute later on a machine they have just been
+            disconnected from.
+            """
+            if not isinstance(payload, dict):
+                raise ValueError("expected a JSON object")
+            ssid = str(payload.get("ssid") or "")
+            password = str(payload.get("password") or "")
+            if not ssid.strip() or len(ssid.encode("utf-8")) > 32:
+                raise ValueError("a Wi-Fi network name is 1 to 32 characters")
+            is_raw_key = len(password) == 64 and all(
+                c in "0123456789abcdefABCDEF" for c in password
+            )
+            if password and not is_raw_key and not 8 <= len(password) <= 63:
+                raise ValueError(
+                    "a Wi-Fi password is 8 to 63 characters, or none for an open network"
+                )
+            network.write_request(ssid, password, controller.path.parent / "wifi-request.json")
+            return {"queued": True, "ssid": ssid}
 
         def _store_logo(self) -> Any:
             """Save an uploaded picture beside the configuration.
@@ -229,7 +271,9 @@ def make_handler(
                 # settings form itself would be no use on a screen with no
                 # keyboard in front of it.
                 bound = int(self.server.server_address[1])
-                self.send_html(200, setup_page(controller, find_reach, port=bound))
+                self.send_html(
+                    200, setup_page(controller, find_reach, port=bound, read_network=read_network)
+                )
                 return None
 
             if path == "/healthz":
@@ -258,6 +302,14 @@ def make_handler(
                         "config": controller.config.public_dict(),
                         "status": controller.status(),
                     }
+                return 405, {"error": "method not allowed"}
+
+            if path == "/api/wifi":
+                if method in ("GET", "HEAD"):
+                    return 200, self._wifi_status()
+                if method == "POST":
+                    self._authorise()
+                    return 200, self._join_wifi(self.read_json())
                 return 405, {"error": "method not allowed"}
 
             if path == "/api/logo":
@@ -318,7 +370,12 @@ def make_handler(
     return Handler
 
 
-def setup_page(controller: Any, find_reach: Any = None, port: int | None = None) -> str:
+def setup_page(
+    controller: Any,
+    find_reach: Any = None,
+    port: int | None = None,
+    read_network: Any = None,
+) -> str:
     """The set-up screen, as a page for a display running a browser.
 
     Rebuilt on every request and told to reload itself, so it follows the
@@ -332,6 +389,24 @@ def setup_page(controller: Any, find_reach: Any = None, port: int | None = None)
     reach = (find_reach or address.find)(port)
     url = reach.url() if port else None
     name = html.escape(controller.config.name or reach.hostname)
+    status = (read_network or network.read_status)() or {}
+    spot = status.get("hotspot") if status.get("mode") == "hotspot" else None
+    if isinstance(spot, dict) and spot.get("ssid") and port:
+        ssid, password = str(spot["ssid"]), str(spot.get("password") or "")
+        there = f"http://{spot.get('address') or network.HOTSPOT_ADDRESS}{'' if port == 80 else f':{port}'}/"
+        body = (
+            '<div class="row">'
+            f'<div class="step"><div class="code">{qr.svg(qr.wifi(ssid, password))}</div>'
+            "<p class=lead>1. Join its Wi-Fi</p>"
+            f"<p class=url>{html.escape(ssid)}</p>"
+            + (f"<p class=muted>password {html.escape(password)}</p>" if password else "")
+            + "</div>"
+            f'<div class="step"><div class="code">{qr.svg(there)}</div>'
+            "<p class=lead>2. Then open</p>"
+            f"<p class=url>{html.escape(there)}</p></div></div>"
+            "<p class=muted>Your phone may say there is no internet; stay connected anyway.</p>"
+        )
+        return SETUP_PAGE.replace("{{BODY}}", body)
     if url is None:
         body = (
             "<h2>Waiting for a network…</h2>"
@@ -365,10 +440,15 @@ h2{font-size:5vh;margin:0}
 .row{display:flex;align-items:center;gap:4vw}
 .code{background:#fff;width:42vh;height:42vh;flex:none}
 .code svg{width:100%;height:100%;display:block}
+.step{display:flex;flex-direction:column;align-items:center;text-align:center}
+.step .code{width:34vh;height:34vh;margin-bottom:2vh}
 p{margin:.6vh 0;font-size:2.4vh}
 .lead{font-size:3.6vh;font-weight:bold}
 .url{font-size:3.4vh;font-weight:bold;color:#4aa3df}
 .muted{color:#9a9a9a}
+/* The hidden attribute loses to any display rule of the page's own, which
+   left fields showing that the script had hidden. */
+[hidden]{display:none!important}
 </style></head><body><main>
 <h1>Set up this display</h1>
 {{BODY}}
@@ -380,7 +460,11 @@ class ConfigServer:
     """Serves the configuration page for one display, in a background thread."""
 
     def __init__(
-        self, controller: Controller, listener: Any = None, find_reach: Any = None
+        self,
+        controller: Controller,
+        listener: Any = None,
+        find_reach: Any = None,
+        read_network: Any = None,
     ) -> None:
         self.controller = controller
         settings = controller.config.web
@@ -388,7 +472,9 @@ class ConfigServer:
         self.listener = listener
         self._server = Server(
             (settings.bind, settings.port),
-            make_handler(controller, listener=listener, find_reach=find_reach),
+            make_handler(
+                controller, listener=listener, find_reach=find_reach, read_network=read_network
+            ),
         )
         self._thread: threading.Thread | None = None
 
@@ -445,6 +531,9 @@ dt{color:var(--muted)}dd{margin:0;text-align:right}
 .big{font-size:1.6rem;font-weight:700;color:var(--good)}
 .note{margin-top:.7rem;font-size:.85rem;min-height:1.2rem}
 .ok{color:var(--good)}.err{color:var(--bad)}.stale{color:var(--warn)}
+/* The hidden attribute loses to any display rule of the page's own, which
+   left fields showing that the script had hidden. */
+[hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="name">Megalink display</h1>
 <div class="sub" id="showing">loading…</div>
@@ -476,6 +565,16 @@ margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:
 <button id="savelogo">Upload logo</button>
 <button class="ghost" id="dellogo">Remove logo</button>
 <div class="note" id="logonote"></div>
+</section>
+
+<section id="wifisec" hidden><h2>Wi-Fi</h2>
+<div class="note" id="wifistate"></div>
+<label><span>Network</span><select id="wifilist"></select></label>
+<label id="wifiother" hidden><span>Name</span><input id="wifissid" autocomplete="off"></label>
+<label><span>Password</span><input id="wifipass" type="password" autocomplete="off"
+  placeholder="leave empty for an open network"></label>
+<button id="wifijoin">Join</button>
+<div class="note" id="wifinote"></div>
 </section>
 
 <section><h2>This screen</h2>
@@ -524,6 +623,34 @@ function showMode() {
   $("modenote").textContent = browser
     ? "Shows Megalink's own page in a full-screen browser. Needs chromium installed."
     : "";
+}
+
+// The display's Wi-Fi, when its hotspot fallback is running. Joining a network
+// from the hotspot disconnects the phone doing it, so the page says what will
+// happen before it happens.
+async function showWifi() {
+  let w;
+  try { w = await api("/api/wifi"); } catch (e) { return; }
+  if (!w.available) return;
+  $("wifisec").hidden = false;
+  const state = {
+    client: "Connected.", hotspot: "No network: this display is running its own Wi-Fi, " + w.hotspot + ".",
+    retrying: "Looking for a known network…", joining: "Joining " + w.joining + "…",
+    waiting: "Starting up…",
+  }[w.mode] || "";
+  $("wifistate").textContent = state + (w.error ? " " + w.error : "");
+  const list = $("wifilist"), keep = list.value;
+  list.innerHTML = "";
+  for (const n of w.networks) {
+    const o = document.createElement("option");
+    o.value = n.ssid; o.textContent = n.ssid + (n.secure ? "" : "  (open)");
+    list.appendChild(o);
+  }
+  const other = document.createElement("option");
+  other.value = ""; other.textContent = "Another network…";
+  list.appendChild(other);
+  if (keep) list.value = keep;
+  $("wifiother").hidden = list.value !== "";
 }
 
 async function showFleet() {
@@ -691,6 +818,20 @@ $("identify").onclick = async () => {
   $("idle").value = cfg.display.idle_text || "";
   showLogo();
   showFleet();
+  showWifi();
+  $("wifilist").onchange = () => { $("wifiother").hidden = $("wifilist").value !== ""; };
+  $("wifijoin").onclick = async () => {
+    const ssid = $("wifilist").value || $("wifissid").value.trim();
+    if (!ssid) { $("wifinote").textContent = "Choose a network, or type its name."; return; }
+    try {
+      await api("/api/wifi", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ssid, password: $("wifipass").value})});
+      $("wifinote").textContent = "Joining " + ssid + ". If you are connected to this display's own " +
+        "Wi-Fi, your phone will drop off it now. Join " + ssid + " yourself, and the display's screen " +
+        "will show its new address. If the password was wrong, its own Wi-Fi comes back in under a minute.";
+      $("wifipass").value = "";
+    } catch (e) { $("wifinote").textContent = e.message; }
+  };
   $("mode").onchange = showMode;
   await loadHosts();
   refresh();

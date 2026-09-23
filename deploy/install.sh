@@ -103,7 +103,10 @@ fi
 # python3-tk is the toolkit the window needs; it is not part of the stdlib
 # install on Debian. xinit gives us a screen without a desktop. Nothing here
 # needs a compiler, which is the point of a dependency-free package.
-PACKAGES="python3 python3-venv"
+# network-manager does the hotspot fallback, and has been Pi OS's own since
+# Bookworm; iw counts the phones joined to it, so it is never dropped from under
+# someone halfway through setting the display up.
+PACKAGES="python3 python3-venv network-manager iw"
 if [ "$EFFECTIVE_MODE" = gui ] || [ "$EFFECTIVE_MODE" = browser ]; then
     PACKAGES="$PACKAGES xserver-xorg xinit x11-xserver-utils"
     [ "$EFFECTIVE_MODE" = gui ] && PACKAGES="$PACKAGES python3-tk"
@@ -420,6 +423,21 @@ DROP
     systemctl enable megalink-display >/dev/null
     systemctl restart megalink-display
     echo "service enabled and started"
+
+    # The hotspot fallback: its own unit, run as root, since it changes the
+    # network and the display never should. Written and checked the same way.
+    NETUNIT=/etc/systemd/system/megalink-netwatch.service
+    install -m 0644 "$SOURCE/deploy/megalink-netwatch.service" "$NETUNIT"
+    sync
+    if [ ! -s "$NETUNIT" ]; then
+        cat "$SOURCE/deploy/megalink-netwatch.service" > "$NETUNIT"
+        sync
+    fi
+    systemctl daemon-reload
+    systemctl unmask megalink-netwatch >/dev/null 2>&1 || true
+    systemctl enable megalink-netwatch >/dev/null
+    systemctl restart megalink-netwatch
+    echo "hotspot fallback enabled"
 
     # Give it a moment and say plainly whether it actually came up, rather than
     # leaving "enabled" to be mistaken for "working".

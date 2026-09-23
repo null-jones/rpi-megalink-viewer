@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 from . import address as reach_module
-from . import qr
+from . import network, qr
 from .models import LaneResult, LaneView, Series, rank_on_relay
 from .render import format_clock
 from .targets import TargetFace
@@ -104,6 +104,9 @@ REACH_INTERVAL_S = 5.0
 #: to scan from the far side of a firing point, small enough to leave room for
 #: the address written out beside it.
 SETUP_CODE_SHARE = 0.42
+#: The same, when there are two codes side by side: one to join the display's
+#: own Wi-Fi, one to open its settings once joined.
+HOTSPOT_CODE_SHARE = 0.30
 
 #: How often the relay standing is recomputed. Working it out means reading
 #: every other firing point on the range, and it need not keep up with the shots.
@@ -549,6 +552,7 @@ class LaneWindow:
         lane_source: Any = None,
         parent: Any = None,
         find_reach: Any = None,
+        read_network: Any = None,
     ) -> None:
         tk, ttk, tkfont = _import_tk()
         self._tk = tk
@@ -603,7 +607,10 @@ class LaneWindow:
         self._find_reach = find_reach or reach_module.find
         self._reach: Any = None
         self._reach_at = float("-inf")
-        self._setup_drawn: tuple[str, int] | None = None
+        #: What the hotspot fallback says it is doing, read from its status file.
+        self._read_network = read_network or network.read_status
+        self._network: dict[str, Any] | None = None
+        self._codes_drawn: dict[str, tuple[str, int]] = {}
         self._last_size = (0, 0)
         self._build(tk, ttk)
         self._bind()
@@ -817,11 +824,14 @@ class LaneWindow:
         self._setup_title.pack(pady=(0, 18))
         row = tk.Frame(stack, bg=CHROME)
         row.pack()
-        # White, and square: a scanner needs the light quiet zone round the code.
+        # Gridded rather than packed, so either code can be taken away and put
+        # back in its own place: grid_remove remembers where a widget went.
+        # White, and square: a scanner needs the light quiet zone round a code.
         self._setup_code = tk.Canvas(row, bg="#ffffff", highlightthickness=0, width=1, height=1)
-        self._setup_code.pack(side="left", padx=(0, 28))
+        self._setup_code.grid(row=0, column=0, padx=(0, 28))
         words = tk.Frame(row, bg=CHROME)
-        words.pack(side="left")
+        words.grid(row=0, column=1, sticky="w")
+        self._setup_words = words
         self._setup_lead = tk.Label(
             words,
             text="",
@@ -850,6 +860,22 @@ class LaneWindow:
             anchor="w",
         )
         self._setup_note.pack(anchor="w", pady=(16, 0))
+        # The second step, shown only on the display's own hotspot: once a
+        # phone has joined it, the code to open the settings page.
+        self._setup_code2 = tk.Canvas(row, bg="#ffffff", highlightthickness=0, width=1, height=1)
+        self._setup_code2.grid(row=0, column=2, padx=(48, 28))
+        self._setup_step2 = tk.Label(
+            row,
+            text="",
+            bg=CHROME,
+            fg=CHROME_TEXT,
+            font=self._fonts["shooter"],
+            justify="left",
+            anchor="w",
+        )
+        self._setup_step2.grid(row=0, column=3, sticky="w")
+        self._setup_code2.grid_remove()
+        self._setup_step2.grid_remove()
 
         # Twenty screens in a row look alike; this is how the fleet dashboard
         # points at one of them.
@@ -1446,7 +1472,11 @@ class LaneWindow:
         return int(getattr(web, "port", 0) or 0)
 
     def _current_reach(self) -> Any:
-        """Where this display can be reached, looked up at most every few seconds."""
+        """Where this display can be reached, looked up at most every few seconds.
+
+        The hotspot fallback's status is read at the same time: both are about
+        how to get at the display, and neither changes from frame to frame.
+        """
         now = time.monotonic()
         if self._reach is None or now - self._reach_at >= REACH_INTERVAL_S:
             self._reach_at = now
@@ -1454,30 +1484,88 @@ class LaneWindow:
                 self._reach = self._find_reach(self._web_port())
             except Exception:  # pragma: no cover - defensive
                 self._reach = reach_module.Reach("", [], self._web_port())
+            try:
+                self._network = self._read_network()
+            except Exception:  # pragma: no cover - defensive
+                self._network = None
         return self._reach
+
+    def _hotspot(self) -> dict[str, Any] | None:
+        """The display's own Wi-Fi, if it has fallen back to one."""
+        self._current_reach()
+        status = self._network or {}
+        spot = status.get("hotspot") if status.get("mode") == "hotspot" else None
+        return spot if isinstance(spot, dict) and spot.get("ssid") else None
 
     def _show_setup(self) -> bool:
         """Cover the screen with how to set it up, when there is nothing to show.
 
-        Returns whether it is showing. The code goes to the address rather than
-        the ``.local`` name, which plenty of phones cannot resolve.
+        Shown when nothing is configured, and also when the display has fallen
+        back to its own hotspot -- it cannot show scores while it is off the
+        network, and the person in front of it needs to know how to fix that.
+        Returns whether it is showing.
         """
         config = getattr(self._state, "config", None)
-        if config is None or getattr(config, "configured", True):
+        if config is None:
+            self._setup.place_forget()
+            return False
+        spot = self._hotspot()
+        if getattr(config, "configured", True) and spot is None:
             self._setup.place_forget()
             return False
 
         port = self._web_port()
         reach = self._current_reach()
-        url = reach.url() if port else None
         name = getattr(config, "name", "") or reach.hostname
 
+        if spot is not None and port:
+            self._show_hotspot(spot, port, configured=getattr(config, "configured", False))
+        else:
+            self._show_one_code(reach, port, name)
+
+        self._setup.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._setup.lift()
+        return True
+
+    def _lay_out_setup(self, two: bool) -> None:
+        """One code beside its words, or two steps side by side, each code over
+        its words.
+
+        Not four things in a row: code, words, code, words is wider than a
+        1280-pixel screen, and the block then hangs off both edges -- which cut
+        the Wi-Fi code in half the first time this was tried on a real screen.
+        """
+        width = self.root.winfo_width() if self.root.winfo_width() > 1 else 1280
+        # Wrap the words to their column, so a long network name cannot push
+        # the layout off the screen either.
+        wrap = int(width * (0.36 if two else 0.46))
+        for label in (self._setup_lead, self._setup_url, self._setup_local, self._setup_note):
+            label.configure(wraplength=wrap)
+        self._setup_step2.configure(wraplength=wrap)
+        if two:
+            self._setup_code.grid(row=0, column=0, padx=24, pady=(0, 16))
+            self._setup_words.grid(row=1, column=0, sticky="n", padx=24)
+            self._setup_code2.grid(row=0, column=1, padx=24, pady=(0, 16))
+            self._setup_step2.grid(row=1, column=1, sticky="n", padx=24)
+        else:
+            self._setup_code.grid(row=0, column=0, padx=(0, 28), pady=0)
+            self._setup_words.grid(row=0, column=1, sticky="w", padx=0)
+            self._setup_code2.grid_remove()
+            self._setup_step2.grid_remove()
+
+    def _show_one_code(self, reach: Any, port: int, name: str) -> None:
+        """Set-up on a network: the address, and a code of it."""
+        self._setup_title.configure(text="Set up this display")
+        self._lay_out_setup(two=False)
+        self._draw_code("second", self._setup_code2, None, HOTSPOT_CODE_SHARE)
+        self._setup_step2.grid_remove()
+        url = reach.url() if port else None
         if not port:
             self._setup_lead.configure(text="This display has no\nconfiguration page.")
             self._setup_url.configure(text="")
             self._setup_local.configure(text="")
             self._setup_note.configure(text="Turn it on with web.enabled in its settings file.")
-            self._draw_setup_code(None)
+            self._draw_code("first", self._setup_code, None, SETUP_CODE_SHARE)
         elif url is None:
             self._setup_lead.configure(text="Waiting for a network…")
             self._setup_url.configure(text="")
@@ -1485,7 +1573,7 @@ class LaneWindow:
             self._setup_note.configure(
                 text="This display is not on Wi-Fi yet.\nCheck the network name and password."
             )
-            self._draw_setup_code(None)
+            self._draw_code("first", self._setup_code, None, SETUP_CODE_SHARE)
         else:
             self._setup_lead.configure(text="Scan with your phone,\nor open")
             self._setup_url.configure(text=url)
@@ -1494,47 +1582,68 @@ class LaneWindow:
             self._setup_note.configure(
                 text=f"Your phone must be on the same network.\nThis display is called {name}."
             )
-            self._draw_setup_code(url)
+            self._draw_code("first", self._setup_code, url, SETUP_CODE_SHARE)
 
-        self._setup.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._setup.lift()
-        return True
+    def _show_hotspot(self, spot: dict[str, Any], port: int, configured: bool) -> None:
+        """Set-up on the display's own Wi-Fi: join it, then open the settings.
 
-    def _draw_setup_code(self, text: str | None) -> None:
-        """Draw ``text`` as a QR code, or clear the code away.
+        Two codes, because that is two steps -- and a phone's camera will join a
+        network from a code, which saves typing a password off a screen.
+        """
+        ssid, password = str(spot.get("ssid", "")), str(spot.get("password", ""))
+        address = str(spot.get("address") or network.HOTSPOT_ADDRESS)
+        url = f"http://{address}{'' if port == 80 else f':{port}'}/"
+        self._setup_title.configure(
+            text="Connect to this display" if configured else "Set up this display"
+        )
+        self._lay_out_setup(two=True)
+        self._setup_lead.configure(text="1. Join its Wi-Fi")
+        self._setup_url.configure(text=ssid)
+        self._setup_local.configure(text=f"password  {password}" if password else "no password")
+        self._setup_note.configure(
+            text=("It can't find the network it knows.\n" if configured else "")
+            + "Your phone may say there is no internet;\nstay connected anyway."
+        )
+        self._draw_code("first", self._setup_code, qr.wifi(ssid, password), HOTSPOT_CODE_SHARE)
+        self._setup_step2.configure(text=f"2. Then open\n{url}")
+        self._draw_code("second", self._setup_code2, url, HOTSPOT_CODE_SHARE)
+
+    def _draw_code(self, key: str, canvas: Any, text: str | None, share: float) -> None:
+        """Draw ``text`` as a QR code on ``canvas``, or take the code away.
 
         Whole pixels to a module, so every module comes out the same size -- a
         scanner copes with a code that is slightly too small much better than
-        with one whose modules are uneven.
+        with one whose modules are uneven. Redrawn only when it changes.
         """
-        canvas = self._setup_code
         if not text:
-            canvas.pack_forget()
-            self._setup_drawn = None
+            canvas.grid_remove()
+            self._codes_drawn.pop(key, None)
             return
         width, height = self.root.winfo_width(), self.root.winfo_height()
-        side = int(min(width, height) * SETUP_CODE_SHARE) if width > 1 and height > 1 else 300
-        if self._setup_drawn == (text, side):
-            return
-        grid = qr.modules(text)
-        cell = max(2, side // len(grid))
-        span = cell * len(grid)
-        canvas.delete("all")
-        canvas.configure(width=span, height=span)
-        for y, row in enumerate(grid):
-            for x, dark in enumerate(row):
-                if dark:
-                    canvas.create_rectangle(
-                        x * cell,
-                        y * cell,
-                        (x + 1) * cell,
-                        (y + 1) * cell,
-                        fill="#000000",
-                        outline="",
-                    )
-        if not canvas.winfo_ismapped():
-            canvas.pack(side="left", padx=(0, 28), before=canvas.master.winfo_children()[-1])
-        self._setup_drawn = (text, side)
+        if width > 1 and height > 1:
+            # Two codes share the width, so a wide-but-short screen and a
+            # narrow one both leave room for the words.
+            side = int(min(min(width, height) * share, width * share * 0.9))
+        else:
+            side = 300
+        if self._codes_drawn.get(key) != (text, side):
+            grid = qr.modules(text)
+            cell = max(2, side // len(grid))
+            span = cell * len(grid)
+            canvas.delete("all")
+            canvas.configure(width=span, height=span)
+            for y, row in enumerate(grid):
+                for x, dark in enumerate(row):
+                    if dark:
+                        canvas.create_rectangle(
+                            x * cell,
+                            y * cell,
+                            (x + 1) * cell,
+                            (y + 1) * cell,
+                            fill="#000000",
+                            outline="",
+                        )
+            self._codes_drawn[key] = (text, side)
 
     def _show_identify(self) -> None:
         """Flash the display's name when it has been asked to identify itself."""

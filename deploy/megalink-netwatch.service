@@ -1,0 +1,31 @@
+# Falls back to a Wi-Fi hotspot when the display cannot get on a network.
+# Installed by deploy/install.sh.
+#
+# Separate from the display, and run as root, because changing the network
+# needs root and the display should never have it. The two talk through files:
+# the display's settings page leaves a network to join in /etc/megalink, and
+# this leaves what it is doing in /run/megalink/network.json for the display to
+# put on the screen.
+[Unit]
+Description=Megalink Wi-Fi hotspot fallback
+Documentation=https://github.com/null-jones/rpi-megalink-viewer
+After=NetworkManager.service
+Wants=NetworkManager.service
+# As for the display: never stop trying to restart. A display stuck without its
+# hotspot is one nobody can reach.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/megalink/venv/bin/python -m megalink_viewer netwatch
+Restart=always
+RestartSec=5
+# /run/megalink, for the status file. Readable by the display, which runs as
+# another user; the hotspot password in it is on the screen anyway.
+RuntimeDirectory=megalink
+RuntimeDirectoryMode=0755
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
