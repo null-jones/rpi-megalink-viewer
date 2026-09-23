@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__
 from .client import MegalinkClient, MegalinkError
@@ -255,6 +255,33 @@ def _screen_size(controller: Any) -> tuple[int | None, int | None]:
     return settings.width, settings.height
 
 
+def two_screens(
+    lane2: str,
+    report: Callable[[str], None],
+    find: Callable[[], list[Any]] | None = None,
+) -> tuple[Any, Any] | None:
+    """The two outputs to put two firing points on, or ``None`` for one screen.
+
+    ``None`` both when no second firing point is configured and when one is but
+    only a single screen is attached -- a Pi Zero, or a Pi 4 with one cable in.
+    The second case is said out loud, because a setting that silently does
+    nothing looks exactly like a broken one.
+    """
+    if not (lane2 or "").strip():
+        return None
+    from .outputs import describe, screens
+
+    found = (find or screens)()
+    report(describe(found))
+    if not found:
+        report("display.lane2 is set but no screens were reported; showing one")
+        return None
+    if len(found) < 2:
+        report("display.lane2 is set but only one screen is attached; showing one")
+        return None
+    return found[0], found[1]
+
+
 def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
     """Run the display this machine is configured to be.
 
@@ -390,7 +417,7 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             return 0
 
         if startup_mode == "browser":
-            from .browser import BrowserDisplay, find_browser
+            from .browser import BrowserDisplay, find_browser, run_panes
 
             def note(message: str) -> None:
                 print(f"megalink: {message}", file=sys.stderr)
@@ -407,7 +434,30 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
                 f"using {browser} on DISPLAY={os.environ.get('DISPLAY', '(unset)')}",
                 file=sys.stderr,
             )
-            BrowserDisplay(controller, should_stop=should_stop, browser=browser, report=note).run()
+
+            def pane(**extra: Any) -> BrowserDisplay:
+                return BrowserDisplay(
+                    controller,
+                    should_stop=should_stop,
+                    browser=browser,
+                    report=note,
+                    **extra,
+                )
+
+            panes = [pane()]
+            pair = two_screens(config.display.lane2, note)
+            if pair is not None:
+                # Separate profiles: Chromium puts a second window into the
+                # first one's session otherwise, and it lands on one screen.
+                panes = [
+                    pane(screen=pair[0], profile="/tmp/megalink-browser-1"),
+                    pane(
+                        screen=pair[1],
+                        profile="/tmp/megalink-browser-2",
+                        lane_source=lambda: controller.config.display.lane2,
+                    ),
+                ]
+            run_panes(panes, should_stop)
             print(_why_stopped(stopping, "the browser was closed"), file=sys.stderr)
             return 0
 
@@ -423,12 +473,42 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             fullscreen=config.display.fullscreen,
             on_lane_change=controller.set_lane,
             should_stop=should_stop,
+            lane_source=lambda: controller.config.lane,
         )
-        width, height = _screen_size(controller)
-        if width and height:
-            window.root.geometry(f"{width}x{height}")
+
+        # A Pi 4 Model B and a Pi 5 each have two HDMI sockets. With a second
+        # firing point configured, and a second screen actually attached, each
+        # gets a window of its own placed on it.
+        second = None
+        pair = two_screens(
+            config.display.lane2, lambda message: print(f"megalink: {message}", file=sys.stderr)
+        )
+        if pair is not None:
+            second = LaneWindow(
+                controller,
+                config.display.lane2.strip(),
+                interval_ms=int(config.display.interval * 1000),
+                should_stop=should_stop,
+                lane_source=lambda: controller.config.display.lane2,
+                parent=window.root,
+            )
+            window.place_on(pair[0])
+            second.place_on(pair[1])
+            print(
+                f"two screens: {pair[0].name} showing lane {window.lane}, "
+                f"{pair[1].name} showing lane {second.lane}",
+                file=sys.stderr,
+            )
+
+        if second is None:
+            width, height = _screen_size(controller)
+            if width and height:
+                window.root.geometry(f"{width}x{height}")
         print("window open", file=sys.stderr)
         print(window.describe(), file=sys.stderr)
+        if second is not None:
+            # Its own redraw loop; the main loop below drives both.
+            second.refresh()
         window.run()
         print(_why_stopped(stopping, "the window was closed"), file=sys.stderr)
         return 0
@@ -501,6 +581,8 @@ def cmd_config(args: argparse.Namespace, client: MegalinkClient) -> int:
         display["mode"] = args.mode
     if args.url is not None:
         display["url"] = args.url
+    if args.lane2 is not None:
+        display["lane2"] = args.lane2
     if args.fullscreen is not None:
         display["fullscreen"] = args.fullscreen
     if display:
@@ -637,6 +719,7 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument(
         "--url", help="page for browser mode (default: Megalink's own, for this firing point)"
     )
+    config.add_argument("--lane2", help="firing point for a second HDMI output (Pi 4 and Pi 5)")
     config.add_argument(
         "--fullscreen",
         dest="fullscreen",

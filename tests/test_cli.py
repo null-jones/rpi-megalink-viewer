@@ -17,6 +17,7 @@ from megalink_viewer.cli import (
     main,
 )
 from megalink_viewer.client import ARENA_DB, MegalinkClient, Source, parse_active_hosts
+from megalink_viewer.outputs import Screen
 
 
 class FakeClient(MegalinkClient):
@@ -337,3 +338,56 @@ print("STOPPED" if stopping() else "STILL RUNNING", flush=True)
         code, out = self._run(tmp_path, getattr(signal_module, name))
         assert "STOPPED" in out, out
         assert code == 0, out
+
+
+class TestTwoScreens:
+    """Deciding whether a display gets one window or two.
+
+    This is the glue between the setting and the hardware, and a setting that
+    silently does nothing looks exactly like a broken one -- so every way of not
+    getting two screens is expected to say why.
+    """
+
+    PAIR = (
+        Screen("HDMI-1", 1920, 1080, 0, 0),
+        Screen("HDMI-2", 1920, 1080, 1920, 0),
+    )
+
+    def ask(self, lane2, found):
+        from megalink_viewer.cli import two_screens
+
+        said = []
+        return two_screens(lane2, said.append, find=lambda: list(found)), said
+
+    def test_no_second_lane_means_one_screen_and_no_question(self):
+        asked = []
+
+        from megalink_viewer.cli import two_screens
+
+        assert two_screens("", lambda _m: None, find=lambda: asked.append(1) or []) is None
+        # xrandr is not even run when nobody asked for a second screen.
+        assert asked == []
+
+    def test_whitespace_is_not_a_lane(self):
+        pair, _said = self.ask("   ", self.PAIR)
+        assert pair is None
+
+    def test_two_screens_and_a_lane_give_a_pair(self):
+        pair, _said = self.ask("10", self.PAIR)
+        assert pair is not None
+        assert [s.name for s in pair] == ["HDMI-1", "HDMI-2"]
+
+    def test_the_screens_found_are_reported(self):
+        _pair, said = self.ask("10", self.PAIR)
+        assert "HDMI-1" in said[0] and "HDMI-2" in said[0]
+
+    def test_one_screen_says_why_it_is_showing_one(self):
+        pair, said = self.ask("10", list(self.PAIR[:1]))
+        assert pair is None
+        assert any("only one screen is attached" in line for line in said)
+
+    def test_no_screens_at_all_says_so(self):
+        # A Pi with no X server to ask, or xrandr missing.
+        pair, said = self.ask("10", [])
+        assert pair is None
+        assert any("no screens were reported" in line for line in said)

@@ -16,7 +16,7 @@ CONFIG="$CONFIG_DIR/display.json"
 SERVICE_USER=megalink
 MODE=""
 
-HOST=""; RANGE=""; LANE=""; NAME=""; TOKEN=""; WEB_PORT=""; URL=""
+HOST=""; RANGE=""; LANE=""; NAME=""; TOKEN=""; WEB_PORT=""; URL=""; LANE2=""
 
 usage() {
     cat >&2 <<'USAGE'
@@ -31,6 +31,9 @@ usage: install.sh [options]
                      Megalink's own page in a full-screen browser
   --url ADDRESS      what browser mode shows (default: Megalink's own page
                      for this firing point)
+  --lane2 N          a second firing point, shown on the second HDMI output.
+                     A Pi 4 Model B and a Pi 5 have two sockets; a Pi Zero
+                     has one, and this is ignored there.
                      (default: leave as configured, or gui on a new install)
   --web-port PORT    port for the configuration page (default: 8080)
   --token SECRET     require this secret to change anything. Give every
@@ -57,6 +60,7 @@ while [ $# -gt 0 ]; do
         --name) NAME="$2"; shift 2 ;;
         --mode) MODE="$2"; shift 2 ;;
         --url) URL="$2"; shift 2 ;;
+        --lane2) LANE2="$2"; shift 2 ;;
         --web-port) WEB_PORT="$2"; shift 2 ;;
         --token) TOKEN="$2"; shift 2 ;;
         --no-service) INSTALL_SERVICE=no; shift ;;
@@ -225,6 +229,7 @@ set -- config --config "$CONFIG"
 [ -n "$NAME" ] && set -- "$@" --name "$NAME"
 [ -n "$TOKEN" ] && set -- "$@" --token "$TOKEN"
 [ -n "$URL" ] && set -- "$@" --url "$URL"
+[ -n "$LANE2" ] && set -- "$@" --lane2 "$LANE2"
 [ -n "$WEB_PORT" ] && set -- "$@" --web-port "$WEB_PORT"
 "$PY" -m megalink_viewer "$@" >/dev/null
 chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG"

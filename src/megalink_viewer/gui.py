@@ -549,6 +549,8 @@ class LaneWindow:
         fullscreen: bool = False,
         on_lane_change: Any = None,
         should_stop: Any = None,
+        lane_source: Any = None,
+        parent: Any = None,
     ) -> None:
         tk, ttk, tkfont = _import_tk()
         self._tk = tk
@@ -565,8 +567,17 @@ class LaneWindow:
         # letting the next frame notice -- which is how systemd's SIGTERM gets
         # this window closed instead of being ignored until it is killed.
         self._should_stop = should_stop
+        #: Where this window's firing point is configured, so a change made from
+        #: the fleet dashboard reaches a window that is already open. Without it
+        #: the dashboard writes the file, reports success, and the screen carries
+        #: on showing the firing point it started with.
+        self._lane_source = lane_source
+        self._configured_lane = str(lane)
 
-        self.root = tk.Tk()
+        # A second window shares the first one's interpreter and main loop
+        # rather than starting a second process: one feed, one beacon, one entry
+        # in the fleet, two screens.
+        self.root = tk.Toplevel(parent) if parent is not None else tk.Tk()
         self.root.title(title)
         self.root.configure(bg=CHROME)
         self.root.minsize(640, 420)
@@ -964,6 +975,24 @@ class LaneWindow:
 
     # -- interaction -------------------------------------------------------
 
+    def place_on(self, screen: Any) -> None:
+        """Fill one output exactly.
+
+        Set directly rather than through a window manager, because a kiosk
+        window manager makes a window fill the whole X screen -- and across two
+        HDMI sockets that is *both* monitors. Both firing points would land on
+        one screen with the other left blank.
+        """
+        self._fullscreen = False
+        with contextlib.suppress(Exception):
+            self.root.attributes("-fullscreen", False)
+        with contextlib.suppress(Exception):
+            self.root.overrideredirect(True)
+        self.root.geometry(screen.geometry)
+        with contextlib.suppress(Exception):
+            self.root.update_idletasks()
+        self.rescale(force=True)
+
     def toggle_fullscreen(self) -> None:
         self._fullscreen = not getattr(self, "_fullscreen", False)
         with contextlib.suppress(Exception):
@@ -1078,11 +1107,37 @@ class LaneWindow:
             return groups[self._series_choice]
         return result.active_display_group or groups[-1]
 
+    @property
+    def lane(self) -> str:
+        """The firing point this window is showing."""
+        return self._lane
+
+    def follow_config(self) -> None:
+        """Adopt a firing point that was changed somewhere else.
+
+        Compared against the last *configured* value rather than against what is
+        on screen, so changing the lane at the screen itself is not undone again
+        by the next redraw.
+        """
+        if self._lane_source is None:
+            return
+        try:
+            wanted = str(self._lane_source() or "").strip()
+        except Exception:  # pragma: no cover - defensive
+            return
+        if not wanted or wanted == self._configured_lane:
+            return
+        self._configured_lane = wanted
+        if wanted != self._lane:
+            self._lane = wanted
+            self._series_choice = None
+
     def refresh(self, poll: bool = True) -> None:
         """Redraw from the shared state, and schedule the next redraw."""
         if self._should_stop is not None and self._should_stop():
             self.close()
             return
+        self.follow_config()
         try:
             view = self._state.lane_view(self._lane)
             self._apply(view)

@@ -940,6 +940,140 @@ class TestSighters:
             win.close()
 
 
+class TestFollowingTheConfig:
+    """A firing point changed elsewhere has to reach a window already open.
+
+    The fleet dashboard changes a display by writing its configuration. Nothing
+    tells the window, so it has to notice -- and until it did, a bulk renumber
+    reported success while every screen carried on showing the lane it started
+    with.
+    """
+
+    def window(self, gui, state, lane, source):
+        win = gui.LaneWindow(state, lane, interval_ms=10_000, lane_source=source)
+        win.root.withdraw()
+        win.refresh(poll=False)
+        return win
+
+    def test_a_change_to_the_configuration_reaches_the_screen(self, gui, root, v2_state):
+        v2_state.config.lane = "9"
+        win = self.window(gui, v2_state, "9", lambda: v2_state.config.lane)
+        try:
+            assert win.lane == "9"
+            v2_state.config.lane = "3"
+            win.refresh(poll=False)
+            assert win.lane == "3"
+        finally:
+            win.close()
+
+    def test_the_badge_follows_it(self, gui, root, v2_state):
+        v2_state.config.lane = "9"
+        win = self.window(gui, v2_state, "9", lambda: v2_state.config.lane)
+        try:
+            v2_state.config.lane = "3"
+            win.refresh(poll=False)
+            assert win._lane_badge.cget("text").strip() == "3"
+        finally:
+            win.close()
+
+    def test_changing_it_at_the_screen_is_not_undone(self, gui, root, v2_state):
+        # Compared against the last configured value, not against what is on
+        # screen, so a redraw does not drag the lane back.
+        v2_state.config.lane = "9"
+        win = self.window(gui, v2_state, "9", lambda: v2_state.config.lane)
+        try:
+            win.set_lane("3")
+            win.refresh(poll=False)
+            assert win.lane == "3"
+        finally:
+            win.close()
+
+    def test_a_window_with_no_source_is_left_alone(self, gui, root, v2_state):
+        win = self.window(gui, v2_state, "9", None)
+        try:
+            v2_state.config.lane = "3"
+            win.refresh(poll=False)
+            assert win.lane == "9"
+        finally:
+            win.close()
+
+    def test_a_source_that_raises_does_not_take_the_display_with_it(self, gui, root, v2_state):
+        def explode():
+            raise RuntimeError("no config")
+
+        win = self.window(gui, v2_state, "9", explode)
+        try:
+            win.refresh(poll=False)
+            assert win.lane == "9"
+        finally:
+            win.close()
+
+
+class TestTwoScreens:
+    """A Pi 4 or Pi 5 has two HDMI sockets; each gets its own firing point."""
+
+    def test_a_second_window_shares_the_first_ones_interpreter(self, gui, root, v2_state):
+        # One process, one feed, one beacon, one entry in the fleet.
+        first = gui.LaneWindow(v2_state, "9", interval_ms=10_000)
+        first.root.withdraw()
+        second = gui.LaneWindow(v2_state, "3", interval_ms=10_000, parent=first.root)
+        try:
+            assert second.root.winfo_toplevel() is not first.root
+            assert str(second.root.master) == str(first.root)
+            second.refresh(poll=False)
+            assert second.lane == "3"
+            assert first.lane == "9"
+        finally:
+            second.close()
+            first.close()
+
+    def test_each_window_is_placed_on_its_own_output(self, gui, root, v2_state):
+        from megalink_viewer.outputs import parse_monitors
+
+        left, right = parse_monitors(
+            "Monitors: 2\n"
+            " 0: +*HDMI-1 1920/530x1080/300+0+0  HDMI-1\n"
+            " 1: +HDMI-2 1920/530x1080/300+1920+0  HDMI-2\n"
+        )
+        first = gui.LaneWindow(v2_state, "9", interval_ms=10_000)
+        first.root.withdraw()
+        second = gui.LaneWindow(v2_state, "3", interval_ms=10_000, parent=first.root)
+        try:
+            first.place_on(left)
+            second.place_on(right)
+            first.root.update_idletasks()
+            second.root.update_idletasks()
+            # A kiosk window manager would make both fill the whole X screen,
+            # which across two sockets is both monitors.
+            assert not first._fullscreen
+            assert "+1920+0" in second.root.geometry() or second.root.winfo_x() == 1920
+        finally:
+            second.close()
+            first.close()
+
+    def test_the_second_screen_follows_its_own_setting(self, gui, root, v2_state):
+        v2_state.config.display.lane2 = "3"
+        first = gui.LaneWindow(v2_state, "9", interval_ms=10_000)
+        first.root.withdraw()
+        second = gui.LaneWindow(
+            v2_state,
+            "3",
+            interval_ms=10_000,
+            parent=first.root,
+            lane_source=lambda: v2_state.config.display.lane2,
+        )
+        try:
+            v2_state.config.display.lane2 = "7"
+            second.refresh(poll=False)
+            first.refresh(poll=False)
+            assert second.lane == "7"
+            # ...and does not drag the first screen along with it.
+            assert first.lane == "9"
+        finally:
+            second.close()
+            first.close()
+
+
 class TestLogoScale:
     """Tk scales by whole numbers, so filling a box means zoom-then-subsample."""
 

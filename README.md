@@ -73,6 +73,27 @@ the same one, so they can manage each other.
 [docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md) has the rest — including what to do
 when the screen stays black, which on a Lite image it will, once.
 
+## Two firing points on one Pi
+
+A **Raspberry Pi 4 Model B** and a **Pi 5** each have two HDMI sockets, and a
+range often wants two positions covered by one box rather than two:
+
+```bash
+make push PI=pi@bench-3 HOST=stord-pk RANGE=1-10 LANE=9 LANE2=10 MODE=gui
+```
+
+Lane 9 goes on the left-hand screen, lane 10 on the right — "left" and "right"
+meaning where they actually sit, not which socket they are plugged into, since
+the outputs are ordered by position rather than by name.
+
+It stays **one process**: one feed, one configuration page, one beacon, one entry
+in the fleet dashboard. The second screen is a second window sharing the first
+one's main loop, and each follows its own setting, so renumbering from the
+dashboard moves them independently.
+
+Works in `browser` mode too, with a Chromium window on each output. A Pi Zero
+has one socket, so `lane2` is ignored there with a line in the log saying so.
+
 ## Three ways to show it
 
 | Mode | What it does | Good for |
@@ -110,6 +131,7 @@ anything in it can be set from the web page, the CLI, or the fleet dashboard.
 
 ```bash
 megalink config --host stord-pk --range 1-10 --lane 9
+megalink config --lane2 10           # second HDMI output, on a Pi 4 or Pi 5
 megalink config --mode gui --interval 0.5
 megalink config                      # show what this machine is set to
 ```

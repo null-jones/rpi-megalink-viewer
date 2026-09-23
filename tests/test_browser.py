@@ -140,6 +140,98 @@ class TestKioskCommand:
             assert switch in command, switch
 
 
+class TestTwoScreens:
+    """A Pi 4 or Pi 5 has two HDMI sockets; each shows its own firing point."""
+
+    def screen(self, x=1920):
+        from megalink_viewer.outputs import Screen
+
+        return Screen("HDMI-2", 1920, 1080, x, 0)
+
+    def test_a_pane_is_placed_on_its_output(self):
+        command = browser.kiosk_command(
+            "/usr/bin/chromium-browser", "http://x/", screen=self.screen()
+        )
+        assert "--window-position=1920,0" in command
+        assert "--window-size=1920,1080" in command
+
+    def test_a_placed_pane_does_not_use_kiosk(self):
+        # --kiosk fills the whole X screen, which across two sockets is both
+        # monitors: both firing points would pile onto one.
+        command = browser.kiosk_command(
+            "/usr/bin/chromium-browser", "http://x/", screen=self.screen()
+        )
+        assert "--kiosk" not in command
+        assert "--start-fullscreen" in command
+
+    def test_a_single_screen_still_uses_kiosk(self):
+        assert "--kiosk" in browser.kiosk_command("/usr/bin/chromium-browser", "http://x/")
+
+    def test_the_prompt_switches_survive_placement(self):
+        command = browser.kiosk_command(
+            "/usr/bin/chromium-browser", "http://x/", screen=self.screen()
+        )
+        assert "--deny-permission-prompts" in command
+        assert "--disable-session-crashed-bubble" in command
+
+    def test_each_pane_needs_its_own_profile(self):
+        # Chromium puts a second window into the first one's session otherwise,
+        # and it opens on whichever screen the first is already on.
+        one = browser.kiosk_command("/c", "http://x/", profile="/tmp/a", screen=self.screen(0))
+        two = browser.kiosk_command("/c", "http://x/", profile="/tmp/b", screen=self.screen())
+        assert "--user-data-dir=/tmp/a" in one
+        assert "--user-data-dir=/tmp/b" in two
+
+    def test_a_second_lane_gets_its_own_address(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        assert browser.feed_url(config).endswith("/1-10/9")
+        assert browser.feed_url(config, lane="4").endswith("/1-10/4")
+
+    def test_both_panes_are_ticked_by_one_loop(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.display.lane2 = "4"
+        controller = FakeController(config)
+        spawned = []
+
+        def make(lane_source=None, profile="/tmp/p"):
+            return browser.BrowserDisplay(
+                controller,
+                spawn=lambda cmd: (spawned.append(FakeProcess(cmd)), spawned[-1])[1],
+                browser="/usr/bin/chromium-browser",
+                lane_source=lane_source,
+                profile=profile,
+            )
+
+        panes = [
+            make(profile="/tmp/p1"),
+            make(lane_source=lambda: config.display.lane2, profile="/tmp/p2"),
+        ]
+        stop = [False]
+        browser.run_panes(panes, lambda: stop.pop(0) if stop else True, poll=0)
+        shown = [p.command[-1] for p in spawned]
+        assert len(shown) == 2
+        assert shown[0].endswith("/1-10/9")
+        assert shown[1].endswith("/1-10/4")
+
+    def test_stopping_closes_every_pane(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        controller = FakeController(config)
+        spawned = []
+        panes = [
+            browser.BrowserDisplay(
+                controller,
+                spawn=lambda cmd: (spawned.append(FakeProcess(cmd)), spawned[-1])[1],
+                browser="/c",
+                profile=f"/tmp/p{n}",
+            )
+            for n in (1, 2)
+        ]
+        stop = [False]
+        browser.run_panes(panes, lambda: stop.pop(0) if stop else True, poll=0)
+        assert len(spawned) == 2
+        assert all("terminate" in p.signals for p in spawned)
+
+
 class TestFindBrowser:
     def test_it_returns_none_when_nothing_is_installed(self, monkeypatch):
         monkeypatch.setattr(browser.shutil, "which", lambda _name: None)

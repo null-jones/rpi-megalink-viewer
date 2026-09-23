@@ -62,6 +62,10 @@ class DisplaySettings:
     height: int | None = None
     #: What to show when nobody is on this firing point.
     idle_text: str = "POSITION NOT IN USE"
+    #: A second firing point, shown on the second HDMI output. A Pi 4 Model B
+    #: and a Pi 5 both have two sockets, and a range often wants two positions
+    #: on one Pi rather than two Pis. Empty means one screen.
+    lane2: str = ""
     #: What to point a browser-mode display at. Empty builds a live.megalink.no
     #: address from the club, range and firing point; set it to show something
     #: else -- a local MLLiveArena server, or a page of several firing points.
@@ -232,6 +236,7 @@ class Config:
         self.display.idle_text = str(self.display.idle_text or "").strip()
         self.display.logo = str(self.display.logo or "").strip()
         self.display.url = str(self.display.url or "").strip()
+        self.display.lane2 = str(self.display.lane2 or "").strip()
         for name in ("width", "height"):
             value = getattr(self.display, name)
             setattr(self.display, name, None if value in (None, "", 0) else int(value))

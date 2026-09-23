@@ -548,3 +548,52 @@ and the fleet dashboard are all plain networking and have been run end to end.
 Starting a display server from a service is the part that varies between Pi OS
 releases, which is why `--mode terminal` and the autologin fallback are both
 documented above.
+
+---
+
+## Two HDMI outputs on a Pi 4 or Pi 5
+
+Both boards have two micro-HDMI sockets. Raspberry Pi OS joins them into a
+single X screen side by side, so showing a different firing point on each is a
+matter of putting each window on the right part of that screen.
+
+```bash
+megalink config --lane 9 --lane2 10
+```
+
+`xrandr --listmonitors` is what says where each output starts:
+
+```
+Monitors: 2
+ 0: +*HDMI-1 1920/530x1080/300+0+0  HDMI-1
+ 1: +HDMI-2 1920/530x1080/300+1920+0  HDMI-2
+```
+
+The screens are ordered **left to right by position**, not in the order xrandr
+happens to list them, so "the first screen" means the one on the left of the
+bench and keeps meaning that when somebody swaps the cables over.
+
+**The windows are placed directly, not by the window manager.** matchbox makes a
+window fill the whole X screen, and across two sockets that is *both* monitors:
+both firing points would pile onto one screen and leave the other blank. So a
+two-screen display sets `overrideredirect` and its own geometry, and matchbox
+leaves it alone. In browser mode the same problem applies to `--kiosk`, which is
+swapped for `--start-fullscreen` plus an explicit `--window-position`.
+
+Chromium also needs **a separate profile per window** — given one profile it
+opens the second address as a tab in the existing window, on whichever screen
+that window is already on.
+
+It remains one process: one feed, one configuration page, one beacon, one entry
+in the fleet. Each window follows its own setting, so a bulk renumber from the
+dashboard moves them independently.
+
+If `lane2` is set but only one screen is attached, the display says so in the
+journal and shows one firing point. A Pi Zero has one socket, so the setting is
+harmless there.
+
+**Not yet verified on hardware.** The parsing, the placement and the two-window
+lifecycle are covered by tests, but no Pi 4 or Pi 5 has run this yet. The first
+thing to check is that both windows land on their own monitor rather than
+stacking on one, and `xrandr --listmonitors` on the machine itself is the place
+to start if they do not.

@@ -412,6 +412,8 @@ margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:
 <option value="browser">Web browser</option></select></label>
 <label><span>Redraw (s)</span><input id="interval" type="number" step="0.1" min="0.1" max="60"></label>
 </div>
+<label><span>Second screen</span>
+<input id="lane2" placeholder="firing point for the second HDMI (optional)"></label>
 <label id="urlrow" hidden><span>Address</span>
 <input id="url" placeholder="leave empty for Megalink's own page"></label>
 <div class="note" id="modenote"></div>
@@ -546,6 +548,7 @@ $("save2").onclick = () => save({
   beacon: {name: $("dname").value},
   display: {
     mode: $("mode").value,
+    lane2: $("lane2").value.trim(),
     url: $("url").value.trim(),
     interval: parseFloat($("interval").value) || 0.5,
     idle_text: $("idle").value,
@@ -604,6 +607,7 @@ $("identify").onclick = async () => {
   $("dname").value = cfg.beacon.name || "";
   $("mode").value = cfg.display.mode;
   $("url").value = cfg.display.url || "";
+  $("lane2").value = cfg.display.lane2 || "";
   showMode();
   $("interval").value = cfg.display.interval;
   $("idle").value = cfg.display.idle_text || "";

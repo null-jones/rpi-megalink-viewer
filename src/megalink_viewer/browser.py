@@ -51,7 +51,7 @@ MIN_RUN_SECONDS = 5.0
 RESTART_DELAY = 3.0
 
 
-def feed_url(config: Config, web_port: int = 0) -> str:
+def feed_url(config: Config, web_port: int = 0, lane: str | None = None) -> str:
     """The page this display should show.
 
     An explicit ``display.url`` wins, which is how a range points its screens at
@@ -70,9 +70,10 @@ def feed_url(config: Config, web_port: int = 0) -> str:
         port = web_port or config.web.port or 8080
         return f"http://localhost:{port}/"
     url = f"{LIVE_URL}/#!/{host}/{range_key}"
-    lane = (config.lane or "").strip()
-    if lane:
-        url = f"{url}/{lane}"
+    wanted = (config.lane if lane is None else lane) or ""
+    wanted = str(wanted).strip()
+    if wanted:
+        url = f"{url}/{wanted}"
     return url
 
 
@@ -85,7 +86,12 @@ def find_browser(candidates: Sequence[str] = BROWSERS) -> str | None:
     return None
 
 
-def kiosk_command(browser: str, url: str, profile: str = "/tmp/megalink-browser") -> list[str]:
+def kiosk_command(
+    browser: str,
+    url: str,
+    profile: str = "/tmp/megalink-browser",
+    screen: Any = None,
+) -> list[str]:
     """The command line for a browser showing one page and nothing else.
 
     Chromium needs telling several times over that this is not a desktop: no
@@ -99,9 +105,19 @@ def kiosk_command(browser: str, url: str, profile: str = "/tmp/megalink-browser"
         return [browser, "--kiosk", "--private-window", url]
     if "epiphany" in name:
         return [browser, "--application-mode", url]
+    placement = []
+    if screen is not None:
+        # Placed on one output rather than left to --kiosk, which fills the
+        # whole X screen. Across two HDMI sockets that is both monitors, so
+        # both firing points would pile onto one and leave the other blank.
+        placement = [
+            f"--window-position={screen.x},{screen.y}",
+            f"--window-size={screen.width},{screen.height}",
+        ]
     return [
         browser,
-        "--kiosk",
+        *(["--start-fullscreen"] if screen is not None else ["--kiosk"]),
+        *placement,
         "--incognito",
         "--noerrdialogs",
         "--disable-infobars",
@@ -151,6 +167,9 @@ class BrowserDisplay:
         browser: str | None = None,
         report: Callable[[str], None] | None = None,
         poll: float = 1.0,
+        screen: Any = None,
+        lane_source: Callable[[], str] | None = None,
+        profile: str = "/tmp/megalink-browser",
     ) -> None:
         self._controller = controller
         self._should_stop = should_stop or (lambda: False)
@@ -161,6 +180,12 @@ class BrowserDisplay:
         self._process: Any = None
         self._url = ""
         self._started_at = 0.0
+        #: The output this pane fills, or None for the whole screen.
+        self._screen = screen
+        self._lane_source = lane_source
+        #: Chromium shares one window per profile, so a second pane needs a
+        #: profile of its own or it opens a tab in the first one instead.
+        self._profile = profile
 
     @staticmethod
     def _default_spawn(command: list[str]) -> Any:  # pragma: no cover - needs a browser
@@ -173,12 +198,17 @@ class BrowserDisplay:
 
     def wanted_url(self) -> str:
         port = getattr(self._controller.config.web, "port", 0)
-        return feed_url(self._controller.config, web_port=port)
+        lane = None
+        if self._lane_source is not None:
+            lane = self._lane_source()
+        return feed_url(self._controller.config, web_port=port, lane=lane)
 
     def start(self, url: str) -> None:
         """Put a page on the screen, replacing whatever is there."""
         self.stop_browser()
-        command = kiosk_command(self._browser or "", url)
+        command = kiosk_command(
+            self._browser or "", url, profile=self._profile, screen=self._screen
+        )
         self._report(f"showing {url}")
         self._process = self._spawn(command)
         self._url = url
@@ -219,9 +249,24 @@ class BrowserDisplay:
 
     def run(self) -> None:
         """Show the page until told to stop."""
-        try:
-            while not self._should_stop():
-                self.tick()
-                time.sleep(self._poll)
-        finally:
-            self.stop_browser()
+        run_panes([self], self._should_stop, self._poll)
+
+
+def run_panes(
+    panes: Sequence[BrowserDisplay],
+    should_stop: Callable[[], bool],
+    poll: float = 1.0,
+) -> None:
+    """Keep every pane on screen until told to stop.
+
+    One loop for all of them, so two HDMI outputs cost one process rather than
+    two: one feed, one configuration page, one entry in the fleet.
+    """
+    try:
+        while not should_stop():
+            for pane in panes:
+                pane.tick()
+            time.sleep(poll)
+    finally:
+        for pane in panes:
+            pane.stop_browser()

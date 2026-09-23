@@ -73,12 +73,13 @@ clean: ## Remove build and cache artefacts
 	rm -rf dist build .pytest_cache .ruff_cache
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
-push: ## Copy this checkout to a Pi over SSH and install it (PI=user@host, MODE=gui|terminal|browser, AUTOLOGIN=1, TOKEN=fleet secret)
+push: ## Copy this checkout to a Pi over SSH and install it (PI=user@host, MODE=gui|terminal|browser, LANE2=second HDMI lane, AUTOLOGIN=1, TOKEN=fleet secret)
 	@test -n "$(PI)" || { echo "set PI, e.g. make push PI=pi@fp-09 HOST=stord-pk RANGE=1-10 LANE=9"; exit 1; }
 	./deploy/push.sh $(PI) \
 		$(if $(HOST),--host $(HOST)) \
 		$(if $(RANGE),--range $(RANGE)) \
 		$(if $(LANE),--lane $(LANE)) \
+		$(if $(LANE2),--lane2 $(LANE2)) \
 		$(if $(NAME),--name $(NAME)) \
 		$(if $(MODE),--mode $(MODE)) \
 		$(if $(TOKEN),--token $(TOKEN)) \
