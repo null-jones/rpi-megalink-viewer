@@ -448,7 +448,7 @@ DROP
         echo "WARNING: the service is enabled but not running. Its log:" >&2
         journalctl -u megalink-display -n 60 --no-pager >&2 || true
         echo >&2
-        echo "If X refused to start, see the notes in README.md." >&2
+        echo "If X refused to start, see docs/RASPBERRY-PI.md." >&2
     fi
 fi
 
@@ -465,16 +465,38 @@ except Exception:
     print(8080)
 PYTHON
 )"
+# Whether anything is needed to change this display. Read the same way as the
+# port, and for the same reason.
+LOCKED="$(
+    "$PY" - "$CONFIG" 2>/dev/null <<'PYTHON' || echo no
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        print("yes" if json.load(handle)["web"].get("token") else "no")
+except Exception:
+    print("no")
+PYTHON
+)"
 ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<DONE
 
 Done.
 
-  configuration page  http://${ADDRESS:-<this pi>}:$PORT/
+  this display        http://${ADDRESS:-<this pi>}:$PORT/
+  every display       http://${ADDRESS:-<this pi>}:$PORT/fleet
   configuration file  $CONFIG
   logs                journalctl -u megalink-display -f
-
-Find every display on the network from a laptop with:
-
-  megalink fleet --open
 DONE
+
+# Said at the end, where it will be read, rather than refused at the start: an
+# open display is the right default for a closed range network, and a choice.
+if [ "$LOCKED" != yes ]; then
+    cat <<OPEN
+
+NOTE: no --token was given, so anyone on this network can change this display,
+and through its fleet page every other display on the range. Give every display
+the same one to require it:
+
+  sudo ./deploy/install.sh --token SOME-SECRET
+OPEN
+fi

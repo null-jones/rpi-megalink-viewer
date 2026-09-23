@@ -6,9 +6,15 @@
 # does not need this file touched, or even a restart.
 [Unit]
 Description=Megalink score display
-Documentation=https://live.megalink.no/
+Documentation=https://github.com/null-jones/rpi-megalink-viewer
 After=network-online.target
 Wants=network-online.target
+# Never give up. By default systemd stops restarting a unit that fails five times
+# in ten seconds, and leaves it stopped until somebody intervenes -- which for a
+# screen on a wall means until somebody drives out and power-cycles it. Today
+# RestartSec=5 happens to keep this unit under that limit; that is an accident
+# of an unrelated setting, and this says so on purpose.
+StartLimitIntervalSec=0
 # Raspberry Pi OS runs a login prompt on tty1, and this wants the same screen.
 # Conflicts rather than disabling it: stop this service and the login prompt
 # comes back, which is worth having on a box whose network has just failed.

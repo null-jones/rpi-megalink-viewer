@@ -124,6 +124,12 @@ Open whichever display you happen to be standing next to and renumber the whole
 row, point them all at a different range, or make one flash its name so you can
 find it. No machine is special, and losing one loses nothing but that screen.
 
+**Set a token.** Without one, anyone on the range network can change any display
+— and through `/fleet`, all of them. Pass the same `TOKEN=` to every display;
+it's also what they use to manage each other. The installer reminds you if you
+forget. [docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md#a-note-on-access) explains
+exactly what an open display is and isn't exposed to.
+
 ## Configuration
 
 Everything lives in one JSON file (`/etc/megalink/display.json` on a Pi), and

@@ -26,12 +26,13 @@ its own server rather than from a browser page.
 
 from __future__ import annotations
 
+import hmac
 import threading
 import time
 from typing import Any
 
 from .client import MegalinkError
-from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path
+from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path, write_durably
 from .controller import Controller
 from .fleet import PAGE as FLEET_PAGE
 from .fleet import Routes as FleetRoutes
@@ -105,7 +106,7 @@ def make_handler(
             if not token:
                 return
             supplied = self.headers.get("X-Megalink-Token") or self.query.get("token") or ""
-            if supplied != token:
+            if not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
                 raise PermissionError("a valid X-Megalink-Token is required")
 
         # -- discovery -----------------------------------------------------
@@ -176,15 +177,15 @@ def make_handler(
 
             target = logo_path(controller.path, suffix)
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Remove the other format, so exactly one logo is ever in place.
+            # The new one goes down first and the other format is removed only
+            # once it is safely on disk. The other way round, a power cut in
+            # between would leave no badge at all.
+            write_durably(target, raw, prefix=".logo-")
             for other in LOGO_SUFFIXES:
                 if other != suffix:
                     stale = logo_path(controller.path, other)
                     if stale.is_file():
                         stale.unlink()
-            temporary = target.with_suffix(target.suffix + ".part")
-            temporary.write_bytes(raw)
-            temporary.replace(target)
             return {"stored": target.name, "bytes": len(raw)}
 
         # -- routing -------------------------------------------------------
@@ -598,7 +599,11 @@ $("dellogo").onclick = async () => {
   } catch (e) { logoNote(e.message, "err"); }
 };
 $("identify").onclick = async () => {
-  try { await api("/api/identify", {method: "POST"}); say("look at the screen", "ok"); }
+  try {
+    await api("/api/identify", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: "{}"});
+    say("look at the screen", "ok");
+  }
   catch (e) { say(e.message, "err"); }
 };
 

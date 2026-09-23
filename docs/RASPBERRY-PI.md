@@ -446,7 +446,7 @@ port, which is how you run two displays on one machine.
 Edit it by hand, or from the command line:
 
 ```bash
-sudo -u megalink /opt/megalink/venv/bin/megalink config --lane 7
+sudo -u megalink /opt/megalink/venv/bin/python -m megalink_viewer config --lane 7
 ```
 
 JSON rather than TOML because the file is *written* by software as well as read,
@@ -483,16 +483,18 @@ Updates are merged, not replaced, so sending one field cannot blank the rest.
 
 ### The fleet dashboard
 
-From a laptop on the same network:
+Every display serves it, on the same port as its own page:
 
-```bash
-megalink fleet --open
+```
+http://fp-09.local:8080/fleet
 ```
 
-Every display broadcasts a small UDP packet every ten seconds saying who it is
-and what it is showing; the dashboard listens and lists them. Select some and
-change them together — which is the difference between setting up twenty firing
-points and setting up one twenty times.
+Each display broadcasts a small UDP packet every ten seconds saying who it is and
+what it is showing, and every display also listens, so each one holds the list
+of all the others. Select some and change them together — which is the
+difference between setting up twenty firing points and setting up one twenty
+times. `megalink fleet --open` serves the same page from a laptop, if you would
+rather work from one; it is no longer needed.
 
 The useful part is **consecutive numbering**: select the displays in order, set
 the club and range, put `1` in the firing-point box with "count up per display",
@@ -505,25 +507,43 @@ says which one failed rather than silently doing half the job.
 Broadcast rather than mDNS because a range network is one flat subnet, and the
 alternative is a dependency (`zeroconf`) or a system service (`avahi`) on a
 machine chosen for being small. The cost is that broadcast does not cross a
-router, so the dashboard has to sit on the same network as the displays. Where
-the heuristics fail, `beacon.address` pins the target — including unicasting
-straight at a dashboard's address.
+router, so the displays have to share a network. Where the heuristics fail,
+`beacon.address` pins the target.
 
 ### A note on access
 
-With no `web.token` set, anyone who can reach a display can reconfigure it. That
-is the right default for a closed range network and the wrong one for anything
-else. Set a shared secret to require it:
+With no `web.token` set, **anyone on the range network can reconfigure any
+display** — and through its fleet page, every display at once. That is a
+reasonable default for a closed range network and the wrong one for anything
+else. Give every display the same secret, which is also what lets them manage
+each other:
 
 ```bash
-sudo -u megalink /opt/megalink/venv/bin/megalink config --token "$(openssl rand -hex 16)"
-megalink fleet --token <the same secret>
+make push PI=pi@fp-09 HOST=stord-pk RANGE=1-10 LANE=9 TOKEN="$(openssl rand -hex 16)"
 ```
 
-Reads stay open either way; only changes need the token. There are deliberately
-no permissive CORS headers on the display API — the fleet dashboard talks to
-displays from its own server, not from your browser, so a page you happen to be
-visiting cannot reach them.
+or on a display that is already installed:
+
+```bash
+sudo -u megalink /opt/megalink/venv/bin/python -m megalink_viewer config --token SOME-SECRET
+```
+
+Reads stay open either way; only changes need the token, and the pages remember
+it once opened with `?token=…`.
+
+**What an open display is open to.** Before September 2026 it was open to more
+than the network. A browser will send some requests to any address without
+asking that address first — a POST whose body is plain text, or a form — and the
+server acts on them even though the sending page never sees the answer. So any
+web page opened by anyone on the range network could rewrite a display, without
+ever being on the network itself. The absence of CORS headers does not help with
+that: it stops a page *reading* the reply, not the request being carried out.
+
+Every POST must now be sent as `application/json`, which a browser will only do
+cross-site after asking the server first — and these servers never say yes. That
+closes the forged-request route; it is not a substitute for a token. A page that
+uses DNS rebinding can still reach an open display, which is the other reason to
+set one.
 
 ### What it costs
 

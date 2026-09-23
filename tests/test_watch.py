@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from megalink_viewer.client import ARENA_DB, LIVE_DB, Event, Source
 from megalink_viewer.watch import RangeState
 
@@ -155,3 +157,35 @@ class TestRangeState:
         state.apply(Event("put", "/", v1_dfs))
         assert state.lanes() == ["2", "3", "4"]
         assert state.lane_view("2").result.total.value == 238
+
+
+class TestClockSteps:
+    """A Pi has no real-time clock, so its wall clock jumps at boot.
+
+    It starts with the time it was last shut down, and NTP then steps it forward
+    by however long it was off. Freshness is an interval, so it must not move
+    when the time of day does.
+    """
+
+    def test_a_wall_clock_step_does_not_make_a_live_feed_look_stale(self, monkeypatch):
+        from megalink_viewer import watch
+
+        # Both clocks faked from the start, so the state records its update on
+        # whichever one it uses -- and only the wall clock then jumps.
+        wall, mono = [1_000_000.0], [500.0]
+        monkeypatch.setattr(watch.time, "time", lambda: wall[0])
+        monkeypatch.setattr(watch.time, "monotonic", lambda: mono[0])
+        state = RangeState(Source(2, "x", "p", "h", "r"), tree={"data": {}})
+
+        mono[0] += 2  # two real seconds pass
+        wall[0] += 3 * 24 * 3600 + 2  # and NTP steps the clock three days on
+        assert state.age() == pytest.approx(2), "a clock step read as a stale feed"
+
+    def test_age_is_measured_on_the_monotonic_clock(self, monkeypatch):
+        from megalink_viewer import watch
+
+        mono = [500.0]
+        monkeypatch.setattr(watch.time, "monotonic", lambda: mono[0])
+        state = RangeState(Source(2, "x", "p", "h", "r"), tree={"data": {}})
+        mono[0] += 12
+        assert state.age() == pytest.approx(12)

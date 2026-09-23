@@ -328,25 +328,53 @@ def load(path: Path | None = None) -> Config:
     return config
 
 
-def save(config: Config, path: Path | None = None) -> Path:
-    """Write the configuration, atomically.
+def write_durably(target: Path, data: bytes, prefix: str = ".megalink-") -> None:
+    """Replace ``target`` with ``data`` so that a power cut leaves old or new.
 
-    A display reads this file while a web request writes it, and a half-written
-    file read at the wrong moment would take the screen down. Writing to a
-    neighbouring temporary file and renaming means a reader sees either the old
-    document or the new one.
+    Atomic *and* durable, which are different things. Writing a neighbouring
+    temporary file and renaming it over the target is atomic: a reader sees one
+    document or the other, never half of each. It is not durable. The rename can
+    reach the disk before the data it points at, and a power cut in between
+    leaves a file of the right name and no length -- which on ext4 is exactly
+    what happens, and exactly what this project kept finding on its Pis: an
+    empty ``display.json``, an empty systemd unit, an empty ``venv/bin/pip``.
+
+    A display is switched off at the wall, so for this one every shutdown is a
+    power cut. The data is flushed before the rename, and the directory after
+    it, so the rename itself is on the disk too.
     """
-    config.validate()
-    target = Path(path) if path is not None else default_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    body = json.dumps(config.to_dict(), indent=2, sort_keys=True) + "\n"
-    handle, temporary = tempfile.mkstemp(dir=str(target.parent), prefix=".display-", suffix=".json")
+    handle, temporary = tempfile.mkstemp(dir=str(target.parent), prefix=prefix)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(body)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, target)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
+    # The rename lives in the directory, not the file. Not every platform lets
+    # a directory be opened for this, and failing here would be worse than the
+    # risk it guards against, so it is best-effort.
+    with contextlib.suppress(OSError):
+        directory = os.open(str(target.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def save(config: Config, path: Path | None = None) -> Path:
+    """Write the configuration, atomically and durably.
+
+    A display reads this file while a web request writes it, and a half-written
+    file read at the wrong moment would take the screen down; and a display is
+    unplugged rather than shut down. See :func:`write_durably`.
+    """
+    config.validate()
+    target = Path(path) if path is not None else default_path()
+    body = json.dumps(config.to_dict(), indent=2, sort_keys=True) + "\n"
+    write_durably(target, body.encode("utf-8"), prefix=".display-")
     return target

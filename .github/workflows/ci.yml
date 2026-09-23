@@ -46,7 +46,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb
 
       - name: Install the project
-        run: uv sync
+        # --locked fails the build if uv.lock no longer matches pyproject.toml,
+        # rather than quietly resolving something different from what a
+        # developer's machine has.
+        run: uv sync --locked
 
       - name: Confirm the GUI tests can really run
         # tests/test_gui.py skips itself when Tkinter is missing, which is right
@@ -78,13 +81,27 @@ jobs:
       # These install and configure a Raspberry Pi, and a mistake in one is
       # found at the range rather than here. They are not covered by pytest.
       - name: Check the shell scripts parse
+        # Failures are counted rather than left to the loop's exit status. That
+        # is the status of whichever script ran *last*, so a broken install.sh
+        # followed by a sound megalink-session would report success.
         run: |
+          failed=0
           for script in deploy/*.sh deploy/megalink-launch deploy/megalink-session; do
-            sh -n "$script" && echo "ok   $script"
+            if sh -n "$script"; then
+              echo "ok    $script"
+            else
+              echo "FAIL  $script"
+              failed=1
+            fi
           done
+          exit "$failed"
 
+      # From the distribution rather than a third-party action. An action
+      # pinned to a branch runs whatever that branch holds on the day, with
+      # this repository's token; apt's shellcheck is just shellcheck.
       - name: shellcheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          additional_files: deploy/megalink-launch deploy/megalink-session
-          severity: warning
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --version | head -2
+          shellcheck -S warning deploy/*.sh deploy/megalink-launch deploy/megalink-session

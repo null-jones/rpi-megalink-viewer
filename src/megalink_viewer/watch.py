@@ -26,7 +26,13 @@ class RangeState:
         self._tree: dict[str, Any] = tree or {}
         self._lock = threading.Lock()
         #: When the last event was applied, or ``None`` before the first arrives.
-        self.updated_at: float | None = None if tree is None else time.time()
+        #:
+        #: On the monotonic clock, not the wall clock. A Pi has no real-time
+        #: clock: it boots with the time it was last shut down, and NTP then
+        #: steps it forward by however long it was off -- often days. Measured
+        #: on the wall clock, a display that was perfectly live would report
+        #: its last update as days old until the next event happened to arrive.
+        self.updated_at: float | None = None if tree is None else time.monotonic()
 
     @property
     def tree(self) -> dict[str, Any]:
@@ -41,7 +47,7 @@ class RangeState:
         with self._lock:
             new_tree = apply_event(self._tree, event)
             self._tree = new_tree if isinstance(new_tree, dict) else {}
-            self.updated_at = time.time()
+            self.updated_at = time.monotonic()
 
     def range_info(self) -> RangeInfo | None:
         return self.source.range_info(self.tree)
@@ -56,7 +62,7 @@ class RangeState:
         """Seconds since the last update, or ``None`` if nothing has arrived."""
         if self.updated_at is None:
             return None
-        return (now if now is not None else time.time()) - self.updated_at
+        return (now if now is not None else time.monotonic()) - self.updated_at
 
 
 class RangeWatcher:

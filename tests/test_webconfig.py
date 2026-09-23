@@ -480,3 +480,91 @@ def meshed_display(config_path, fake_client):
     yield server
     server.stop()
     controller.stop()
+
+
+class TestForgedRequests:
+    """A web page must not be able to reconfigure a display.
+
+    Browsers let any page send a "simple" request to any address without asking
+    the server first -- a POST whose body is plain text, a form, or nothing --
+    and the server acts on it even though the page never sees the answer. With
+    no token set, which is the default, that let any page opened by anyone on
+    the range network rewrite a display, and through the fleet endpoint, every
+    display on the range.
+    """
+
+    def raw(self, server, path, body, content_type, method="POST"):
+        headers = {"Content-Type": content_type} if content_type else {}
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.port}{path}",
+            data=body.encode() if body is not None else b"",
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "text/plain;charset=UTF-8",  # <form enctype="text/plain">, fetch no-cors
+            "application/x-www-form-urlencoded",  # an ordinary form
+            "multipart/form-data; boundary=x",
+            "",  # no body type at all
+        ],
+    )
+    def test_a_forgeable_post_changes_nothing(self, display, content_type):
+        controller, server, _path = display
+        body = json.dumps({"lane": "1", "display": {"url": "https://attacker.example/"}})
+        assert self.raw(server, "/api/config", body, content_type) == 415
+        assert controller.config.lane == "9"
+        assert controller.config.display.url == ""
+
+    def test_the_identify_button_cannot_be_pressed_from_another_site(self, display):
+        _controller, server, _path = display
+        assert self.raw(server, "/api/identify", "", "") == 415
+
+    def test_a_json_post_is_still_accepted(self, display):
+        controller, server, _path = display
+        status = self.raw(server, "/api/config", json.dumps({"lane": "4"}), "application/json")
+        assert status == 200
+        assert controller.config.lane == "4"
+
+    def test_a_charset_on_the_json_type_is_fine(self, display):
+        controller, server, _path = display
+        status = self.raw(
+            server, "/api/config", json.dumps({"lane": "5"}), "application/json; charset=utf-8"
+        )
+        assert status == 200
+        assert controller.config.lane == "5"
+
+    def test_reads_are_unaffected(self, display):
+        _controller, server, _path = display
+        assert request(server, "/api/status")[0] == 200
+
+    def test_the_fleet_cannot_be_driven_from_another_site(self, meshed_display):
+        # The one that mattered most: a single forged request used to reach
+        # every display on the range.
+        server = meshed_display
+        body = json.dumps({"targets": ["10.0.0.5:8080"], "patch": {"lane": "1"}})
+        assert self.raw(server, "/api/fleet/apply", body, "text/plain") == 415
+
+
+class TestTokenComparison:
+    def test_a_wrong_token_is_refused(self, display):
+        controller, server, _path = display
+        controller.write(controller.config.merged({"web": {"token": "right"}}))
+        assert expect_error(server, "/api/config", "PUT", {"lane": "2"}, token="wrong")[0] == 403
+
+    def test_a_token_that_is_only_a_prefix_is_refused(self, display):
+        controller, server, _path = display
+        controller.write(controller.config.merged({"web": {"token": "right-and-long"}}))
+        assert expect_error(server, "/api/config", "PUT", {"lane": "2"}, token="right")[0] == 403
+
+    def test_the_right_token_is_accepted(self, display):
+        controller, server, _path = display
+        controller.write(controller.config.merged({"web": {"token": "right"}}))
+        assert request(server, "/api/config", "PUT", {"lane": "2"}, token="right")[0] == 200

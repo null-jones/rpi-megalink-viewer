@@ -598,7 +598,7 @@ class LaneWindow:
             "clock_box": FittedType(self._clone(tkfont, "clock_box"), "clock_box"),
         }
         self._scale = 1.0
-        self._standing_at = 0.0
+        self._standing_at = float("-inf")
         self._standing_text = ""
         self._last_size = (0, 0)
         self._build(tk, ttk)
@@ -1224,7 +1224,9 @@ class LaneWindow:
         other firing point on the range, and a placing changing half a second
         late costs nobody anything.
         """
-        now = _now_ms()
+        # Monotonic: an interval, not a time of day, and a wall clock that NTP
+        # steps backwards would otherwise freeze the placing until it caught up.
+        now = time.monotonic() * 1000.0
         if now - self._standing_at >= STANDING_INTERVAL_MS:
             self._standing_at = now
             self._standing_text = self._relay_standing(view.lane)

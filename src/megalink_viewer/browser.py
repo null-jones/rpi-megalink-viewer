@@ -28,7 +28,8 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Callable, Sequence  # noqa: UP035
+from collections.abc import Sequence
+from typing import Any, Callable
 
 from .config import Config
 

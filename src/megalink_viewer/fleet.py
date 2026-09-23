@@ -66,10 +66,14 @@ def ping_identify(display: Display, token: str = "") -> None:
     url = display.url
     if not url:
         raise FleetError(f"{display.name} did not say which port its page is on")
-    headers = {"Content-Length": "0"}
+    # JSON, though there is nothing in it: a display refuses any POST that a
+    # web page could have forged, and an empty text body is exactly that.
+    headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Megalink-Token"] = token
-    request = urllib.request.Request(f"{url}/api/identify", headers=headers, method="POST")
+    request = urllib.request.Request(
+        f"{url}/api/identify", data=b"{}", headers=headers, method="POST"
+    )
     try:
         urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT).close()
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:

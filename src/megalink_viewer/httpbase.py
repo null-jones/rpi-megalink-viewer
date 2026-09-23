@@ -7,6 +7,7 @@ and a dependency-free install is the whole point.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -123,7 +124,40 @@ class JSONHandler(BaseHTTPRequestHandler):
     def route(self, method: str) -> tuple[int, Any] | None:  # pragma: no cover - abstract
         raise NotImplementedError
 
+    def _is_forgeable(self, method: str) -> bool:
+        """Whether this request is one a hostile web page could have sent.
+
+        A browser lets any page send a "simple" request to any address without
+        asking the server first: a POST whose body is ``text/plain``, a form, or
+        nothing at all. The page cannot read the answer, but the server acts on
+        it anyway. So a page opened by anyone on the range network could rewrite
+        a display -- and through ``/api/fleet/apply``, every display at once --
+        without ever being on the network itself.
+
+        Requiring ``application/json`` on every POST closes that. A browser will
+        only send that content type cross-site after a preflight, and these
+        servers never answer one, so the request is stopped before it is sent.
+        PUT and DELETE always preflight, so they need nothing. This is not
+        authentication -- a token still is -- but it means an open display is
+        open to the people on its network rather than to every web page they
+        happen to visit.
+        """
+        if method != "POST":
+            return False
+        kind = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        return kind != "application/json"
+
     def _handle(self, method: str) -> None:
+        if self._is_forgeable(method):
+            # Drained first, for the same reason as an oversized body: an
+            # unread body leaves the client writing into a closed socket.
+            with contextlib.suppress(Exception):
+                claimed = int(self.headers.get("Content-Length") or 0)
+                self._drain(min(max(claimed, 0), DRAIN_LIMIT))
+            # Nothing more is read from this connection, so do not keep it.
+            self.close_connection = True
+            self.send_error_json(415, "POST bodies must be sent as application/json")
+            return
         try:
             result = self.route(method)
         except BodyTooLarge as exc:

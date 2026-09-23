@@ -223,3 +223,91 @@ class TestPathResolution:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.setattr("megalink_viewer.config.SYSTEM_PATH", tmp_path / "nonexistent")
         assert default_path() == tmp_path / "megalink" / "display.json"
+
+
+class TestDurableWrites:
+    """A display is unplugged, not shut down, so every write must survive that.
+
+    This project kept finding zero-length files on its Pis -- the config, the
+    systemd unit, a venv binary -- which is what a rename that reaches the disk
+    ahead of its data leaves behind after a power cut.
+    """
+
+    def test_the_data_is_flushed_before_the_rename(self, tmp_path, monkeypatch):
+        from megalink_viewer import config as module
+
+        order = []
+        real_fsync, real_replace = module.os.fsync, module.os.replace
+        monkeypatch.setattr(
+            module.os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd))[1]
+        )
+        monkeypatch.setattr(
+            module.os, "replace", lambda a, b: (order.append("replace"), real_replace(a, b))[1]
+        )
+        module.write_durably(tmp_path / "display.json", b"{}")
+        assert order.index("fsync") < order.index("replace"), order
+
+    def test_the_directory_is_flushed_after_the_rename(self, tmp_path, monkeypatch):
+        # The rename is recorded in the directory, so it needs flushing too.
+        from megalink_viewer import config as module
+
+        order = []
+        real_fsync, real_replace = module.os.fsync, module.os.replace
+        monkeypatch.setattr(
+            module.os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd))[1]
+        )
+        monkeypatch.setattr(
+            module.os, "replace", lambda a, b: (order.append("replace"), real_replace(a, b))[1]
+        )
+        module.write_durably(tmp_path / "display.json", b"{}")
+        assert order == ["fsync", "replace", "fsync"], order
+
+    def test_the_content_arrives(self, tmp_path):
+        from megalink_viewer.config import write_durably
+
+        target = tmp_path / "x.json"
+        write_durably(target, b'{"a": 1}')
+        assert target.read_bytes() == b'{"a": 1}'
+
+    def test_no_temporary_is_left_behind(self, tmp_path):
+        from megalink_viewer.config import write_durably
+
+        write_durably(tmp_path / "x.json", b"{}")
+        assert [p.name for p in tmp_path.iterdir()] == ["x.json"]
+
+    def test_a_failed_write_leaves_the_old_file_alone(self, tmp_path, monkeypatch):
+        from megalink_viewer import config as module
+
+        target = tmp_path / "display.json"
+        target.write_bytes(b'{"old": true}')
+
+        def fail(_fd):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(module.os, "fsync", fail)
+        with pytest.raises(OSError):
+            module.write_durably(target, b'{"new": true}')
+        assert target.read_bytes() == b'{"old": true}'
+        assert [p.name for p in tmp_path.iterdir()] == ["display.json"]
+
+    def test_a_directory_that_cannot_be_flushed_is_not_fatal(self, tmp_path, monkeypatch):
+        from megalink_viewer import config as module
+
+        real_open = module.os.open
+
+        def no_dirs(path, flags, *rest):
+            if str(path) == str(tmp_path):
+                raise OSError("not on this platform")
+            return real_open(path, flags, *rest)
+
+        monkeypatch.setattr(module.os, "open", no_dirs)
+        module.write_durably(tmp_path / "x.json", b"{}")
+        assert (tmp_path / "x.json").read_bytes() == b"{}"
+
+    def test_saving_the_configuration_goes_through_it(self, tmp_path, monkeypatch):
+        from megalink_viewer import config as module
+
+        calls = []
+        monkeypatch.setattr(module, "write_durably", lambda t, d, prefix="": calls.append(t))
+        module.save(module.Config(host="a", range="b", lane="1"), tmp_path / "d.json")
+        assert calls == [tmp_path / "d.json"]
