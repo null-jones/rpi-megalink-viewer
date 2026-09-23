@@ -119,6 +119,10 @@ class TestHotspotIdentity:
     def test_the_name_says_what_it_is(self):
         assert network.hotspot_ssid("fp-09") == "Megalink fp-09"
 
+    def test_a_display_from_the_image_is_not_called_megalink_twice(self):
+        # One flashed from the release image names itself megalink-3f2a.
+        assert network.hotspot_ssid("megalink-3f2a") == "megalink-3f2a"
+
     def test_the_name_fits_in_thirty_two_bytes(self):
         name = network.hotspot_ssid("å" * 40)
         assert len(name.encode("utf-8")) <= 32
@@ -297,7 +301,11 @@ class TestRequests:
     def test_a_request_is_taken_once(self, tmp_path):
         path = tmp_path / "wifi-request.json"
         network.write_request("Range", "secret-pass", path)
-        assert network.read_request(path) == {"ssid": "Range", "password": "secret-pass"}
+        assert network.read_request(path) == {
+            "ssid": "Range",
+            "password": "secret-pass",
+            "country": "",
+        }
         assert network.read_request(path) is None
         assert not path.exists()
 
@@ -493,3 +501,71 @@ def test_the_hotspot_address_is_networkmanagers():
 @pytest.mark.parametrize("value", ["plain", "with space", "semi;colon", 'quote"d'])
 def test_ordinary_values_are_left_alone(value):
     assert network._keyfile_value(value) == value
+
+
+class TestTheRadio:
+    """A Pi with no Wi-Fi country leaves its radio off -- the very Pi that
+    needs the hotspot. Raspberry Pi OS blocks it, and tells NetworkManager to
+    keep Wi-Fi disabled, until a country is set."""
+
+    def run(self, tmp_path, fake, ticks, request=None, country=""):
+        status, request_path = tmp_path / "status.json", tmp_path / "request.json"
+        if request:
+            network.write_request(*request, request_path, country=country)
+        clock = iter(range(0, 100_000, 5))
+        remaining = iter([False] * ticks + [True])
+        network.run(
+            network.NetworkManager(fake, tmp_path / "nm"),
+            stop=lambda: next(remaining),
+            report=lambda _m: None,
+            clock=lambda: next(clock),
+            sleep=lambda _s: None,
+            status_path=status,
+            request_path=request_path,
+            secret_path=tmp_path / "secret.json",
+        )
+        return fake.calls
+
+    def index(self, calls, wanted):
+        return next(i for i, call in enumerate(calls) if call[: len(wanted)] == wanted)
+
+    def test_the_radio_is_switched_on_before_the_hotspot_starts(self, tmp_path):
+        calls = self.run(tmp_path, FakeNmcli(), ticks=10)
+        on = self.index(calls, ["nmcli", "radio", "wifi", "on"])
+        up = next(i for i, c in enumerate(calls) if "up" in c and HOTSPOT in c)
+        assert on < up
+
+    def test_and_before_joining_a_network(self, tmp_path):
+        calls = self.run(tmp_path, FakeNmcli(), ticks=2, request=("Range", "secret-pass"))
+        on = self.index(calls, ["nmcli", "radio", "wifi", "on"])
+        join = next(i for i, c in enumerate(calls) if "up" in c and "megalink Range" in c)
+        assert on < join
+
+    def test_a_chosen_country_is_set_before_joining(self, tmp_path):
+        calls = self.run(
+            tmp_path, FakeNmcli(), ticks=2, request=("Range", "secret-pass"), country="no"
+        )
+        country = self.index(calls, ["raspi-config", "nonint", "do_wifi_country"])
+        assert calls[country][-1] == "NO"
+        join = next(i for i, c in enumerate(calls) if "up" in c and "megalink Range" in c)
+        assert country < join
+
+    def test_no_country_chosen_leaves_it_alone(self, tmp_path):
+        calls = self.run(tmp_path, FakeNmcli(), ticks=2, request=("Range", "secret-pass"))
+        assert not any(c[:1] == ["raspi-config"] for c in calls)
+
+    def test_the_country_in_force_is_read_from_iw(self, tmp_path):
+        answers = {
+            "country NO: DFS-ETSI\n\t(2400 - 2483 @ 40), (N/A, 20)\n": "NO",
+            "global\ncountry 00: DFS-UNSET\n": "",  # the world default: none set
+        }
+        for text, expected in answers.items():
+            nm = network.NetworkManager(lambda args, timeout=30.0, t=text: (0, t), tmp_path)
+            assert nm.country() == expected
+
+    def test_a_request_country_is_tidied(self, tmp_path):
+        path = tmp_path / "wifi-request.json"
+        network.write_request("Range", "secret-pass", path, country=" no ")
+        assert network.read_request(path)["country"] == "NO"
+        network.write_request("Range", "secret-pass", path, country="norway")
+        assert network.read_request(path)["country"] == ""

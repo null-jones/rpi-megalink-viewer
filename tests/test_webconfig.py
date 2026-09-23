@@ -684,7 +684,11 @@ class TestWifi:
         )
         assert code == 200 and body["queued"]
         left = path.parent / "wifi-request.json"
-        assert json.loads(left.read_text()) == {"ssid": "Range", "password": "secret-pass"}
+        assert json.loads(left.read_text()) == {
+            "ssid": "Range",
+            "password": "secret-pass",
+            "country": "",
+        }
 
     def test_the_request_is_private(self, served):
         import os
@@ -749,3 +753,40 @@ class TestWifi:
         assert "1. Join its Wi-Fi" in body and "Megalink fp-09" in body
         assert f"http://10.42.0.1:{server.port}/" in body
         assert body.count("<svg") == 2
+
+
+class TestWifiCountry:
+    @pytest.fixture
+    def served(self, config_path, fake_client):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.web.port = 0
+        config.web.bind = "127.0.0.1"
+        config.beacon.enabled = False
+        save(config, config_path)
+        controller = Controller(path=config_path, client=fake_client)
+        controller.reload()
+        server = ConfigServer(
+            controller, read_network=lambda: {"mode": "hotspot", "country": "CA"}
+        ).start()
+        yield server, config_path
+        server.stop()
+        controller.stop()
+
+    def test_the_country_in_force_is_offered(self, served):
+        server, _p = served
+        assert request(server, "/api/wifi")[1]["country"] == "CA"
+
+    def test_a_chosen_country_goes_with_the_network(self, served):
+        server, path = served
+        request(
+            server,
+            "/api/wifi",
+            "POST",
+            {"ssid": "Range", "password": "secret-pass", "country": "no"},
+        )
+        assert json.loads((path.parent / "wifi-request.json").read_text())["country"] == "NO"
+
+    def test_a_country_must_be_two_letters(self, served):
+        server, _p = served
+        payload = {"ssid": "Range", "password": "secret-pass", "country": "Norway"}
+        assert expect_error(server, "/api/wifi", "POST", payload)[0] == 400

@@ -171,6 +171,7 @@ def make_handler(
                 "error": status.get("error", ""),
                 "networks": status.get("networks") or [],
                 "hotspot": (status.get("hotspot") or {}).get("ssid", ""),
+                "country": status.get("country", ""),
             }
 
         def _join_wifi(self, payload: Any) -> dict[str, Any]:
@@ -193,8 +194,13 @@ def make_handler(
                 raise ValueError(
                     "a Wi-Fi password is 8 to 63 characters, or none for an open network"
                 )
-            network.write_request(ssid, password, controller.path.parent / "wifi-request.json")
-            return {"queued": True, "ssid": ssid}
+            country = str(payload.get("country") or "").strip().upper()
+            if country and not (len(country) == 2 and country.isalpha()):
+                raise ValueError("a Wi-Fi country is two letters, such as GB, US, NO or CA")
+            network.write_request(
+                ssid, password, controller.path.parent / "wifi-request.json", country=country
+            )
+            return {"queued": True, "ssid": ssid, "country": country}
 
         def _store_logo(self) -> Any:
             """Save an uploaded picture beside the configuration.
@@ -573,6 +579,8 @@ margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:
 <label id="wifiother" hidden><span>Name</span><input id="wifissid" autocomplete="off"></label>
 <label><span>Password</span><input id="wifipass" type="password" autocomplete="off"
   placeholder="leave empty for an open network"></label>
+<label><span>Country</span><input id="wificountry" maxlength="2" autocomplete="off"
+  placeholder="two letters: GB, US, NO, CA…" style="text-transform:uppercase"></label>
 <button id="wifijoin">Join</button>
 <div class="note" id="wifinote"></div>
 </section>
@@ -651,6 +659,9 @@ async function showWifi() {
   list.appendChild(other);
   if (keep) list.value = keep;
   $("wifiother").hidden = list.value !== "";
+  // Radio rules differ by country, and a Pi with none set keeps to the ones
+  // that are safe everywhere, which rules out much of 5 GHz.
+  if (w.country && !$("wificountry").value) $("wificountry").value = w.country;
 }
 
 async function showFleet() {
@@ -825,7 +836,8 @@ $("identify").onclick = async () => {
     if (!ssid) { $("wifinote").textContent = "Choose a network, or type its name."; return; }
     try {
       await api("/api/wifi", {method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ssid, password: $("wifipass").value})});
+        body: JSON.stringify({ssid, password: $("wifipass").value,
+                              country: $("wificountry").value.trim().toUpperCase()})});
       $("wifinote").textContent = "Joining " + ssid + ". If you are connected to this display's own " +
         "Wi-Fi, your phone will drop off it now. Join " + ssid + " yourself, and the display's screen " +
         "will show its new address. If the password was wrong, its own Wi-Fi comes back in under a minute.";

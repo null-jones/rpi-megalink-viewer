@@ -219,7 +219,14 @@ def profile_name(ssid: str) -> tuple[str, str]:
 
 def hotspot_ssid(name: str) -> str:
     """What the hotspot is called: recognisable, and within Wi-Fi's 32 bytes."""
-    base = f"Megalink {name}".strip() if name else "Megalink display"
+    if not name:
+        base = "Megalink display"
+    elif name.lower().startswith("megalink"):
+        # A display from the release image names itself megalink-3f2a; saying
+        # "Megalink" twice would help nobody tell the hotspots apart.
+        base = name
+    else:
+        base = f"Megalink {name}"
     encoded = base.encode("utf-8")[:32]
     return encoded.decode("utf-8", errors="ignore")
 
@@ -335,6 +342,38 @@ class NetworkManager:
         # says so only in its own log.
         os.chmod(target, 0o600)
         self._run(["nmcli", "connection", "reload"])
+
+    def enable_radio(self) -> None:
+        """Switch the Wi-Fi radio on, which a Pi with no country set leaves off.
+
+        Raspberry Pi OS blocks the radio until a Wi-Fi country is set, and tells
+        NetworkManager to keep Wi-Fi disabled -- so a card flashed without one,
+        which is exactly the card that needs the hotspot, would never get one.
+        The block is there to stop a Pi transmitting on 5 GHz before it knows
+        which country's rules apply. The hotspot is 2.4 GHz only, whose channels
+        1 to 11 are allowed everywhere under the kernel's default world rules,
+        so switching the radio on for it stays within them.
+        """
+        self._run(["nmcli", "radio", "wifi", "on"])
+        self._run(["rfkill", "unblock", "wlan"])
+
+    def country(self) -> str:
+        """The Wi-Fi country in force, or empty while it is the world default."""
+        code, out = self._run(["iw", "reg", "get"])
+        if code != 0:
+            return ""
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("country ") and ":" in line:
+                value = line[len("country ") : line.index(":")]
+                return "" if value == "00" else value
+        return ""
+
+    def set_country(self, country: str) -> None:
+        """Set the Wi-Fi country, the way Raspberry Pi OS itself does."""
+        code, _out = self._run(["raspi-config", "nonint", "do_wifi_country", country])
+        if code != 0:
+            self._run(["iw", "reg", "set", country])
 
     def up(self, connection_id: str, wait: float = 40.0) -> bool:
         code, _out = self._run(
@@ -508,12 +547,17 @@ def read_request(path: Path = REQUEST_PATH) -> dict[str, str] | None:
             path.unlink()
     if not isinstance(data, dict) or not str(data.get("ssid") or "").strip():
         return None
-    return {"ssid": str(data["ssid"]), "password": str(data.get("password") or "")}
+    country = str(data.get("country") or "").strip().upper()
+    return {
+        "ssid": str(data["ssid"]),
+        "password": str(data.get("password") or ""),
+        "country": country if len(country) == 2 and country.isalpha() else "",
+    }
 
 
-def write_request(ssid: str, password: str, path: Path = REQUEST_PATH) -> None:
+def write_request(ssid: str, password: str, path: Path = REQUEST_PATH, country: str = "") -> None:
     """Leave a network for the service to join. What the settings page calls."""
-    body = json.dumps({"ssid": ssid, "password": password}).encode("utf-8")
+    body = json.dumps({"ssid": ssid, "password": password, "country": country}).encode("utf-8")
     write_durably(path, body, prefix=".wifi-request-")
     os.chmod(path, 0o600)
 
@@ -528,7 +572,10 @@ def read_status(path: Path = STATUS_PATH) -> dict[str, Any] | None:
 
 
 def status(
-    memory: Memory, secret: dict[str, str], networks: list[dict[str, Any]]
+    memory: Memory,
+    secret: dict[str, str],
+    networks: list[dict[str, Any]],
+    country: str = "",
 ) -> dict[str, Any]:
     """The status file's contents. The hotspot password is on the screen anyway;
     the password of a network being joined never goes in here."""
@@ -543,6 +590,7 @@ def status(
         "joining": memory.joining,
         "error": memory.error,
         "networks": networks,
+        "country": country,
         "updated": time.time(),
     }
 
@@ -570,6 +618,7 @@ def run(
     memory = Memory(since=clock())
     networks: list[dict[str, Any]] = []
     pending: dict[str, str] | None = None
+    country = nm.country()
     report(f"watching the network; hotspot {secret['ssid']!r} if it is needed")
 
     while not stop():
@@ -580,6 +629,7 @@ def run(
         previous = memory.mode
         for action in decide(clock(), seen, memory):
             if action == "start_hotspot":
+                nm.enable_radio()
                 # Look round first: while the radio is a hotspot it cannot.
                 networks = nm.scan() or networks
                 nm.save(
@@ -597,6 +647,10 @@ def run(
             elif action == "stop_hotspot":
                 nm.down(HOTSPOT_ID)
             elif action == "join" and pending:
+                nm.enable_radio()
+                if pending.get("country"):
+                    nm.set_country(pending["country"])
+                    report(f"Wi-Fi country set to {pending['country']}")
                 connection_id, filename = profile_name(pending["ssid"])
                 nm.save(
                     filename,
@@ -609,9 +663,10 @@ def run(
                 pending = None
         if memory.mode != previous:
             report(f"network: {previous} -> {memory.mode}")
+            country = nm.country()
         write_durably(
             status_path,
-            json.dumps(status(memory, secret, networks)).encode("utf-8"),
+            json.dumps(status(memory, secret, networks, country)).encode("utf-8"),
             prefix=".network-",
         )
         os.chmod(status_path, 0o644)
