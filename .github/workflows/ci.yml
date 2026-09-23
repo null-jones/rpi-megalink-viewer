@@ -14,54 +14,69 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Python ${{ matrix.python }}
+  pi-os:
+    # The tests run on what a Pi actually runs: Debian's own Python and Tk, in
+    # the Debian release each Raspberry Pi OS is built on. Not uv's Python. Its
+    # Tk on Linux is built without Xft, so it has a single nine-point bitmap
+    # font whatever size is asked for -- every test about fitting type to its
+    # box passed or failed on that, not on anything a Pi would do.
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
     strategy:
-      # One version failing should not hide what the others would have said.
+      # One release failing should not hide what the other would have said.
       fail-fast: false
       matrix:
-        # The ends of the range pyproject.toml claims, and the two that matter
-        # in practice: Raspberry Pi OS Bookworm ships 3.11, Trixie ships 3.13.
-        python: ["3.9", "3.11", "3.13"]
+        include:
+          - name: Pi OS Bookworm (Python 3.11)
+            image: debian:bookworm
+          - name: Pi OS Trixie (Python 3.13)
+            image: debian:trixie
 
     env:
-      UV_PYTHON: ${{ matrix.python }}
+      DEBIAN_FRONTEND: noninteractive
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_PREFERENCE: only-system
 
     steps:
+      - name: Install what the installer installs
+        # python3-tk brings fonts-dejavu-core with it, which is what gives the
+        # display scalable type. xvfb is a screen for the window tests.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 python3-tk xvfb xauth git curl ca-certificates
+
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Tk and a virtual display
-        # The window is Tkinter, so most of the test suite needs a real X
-        # display to open a window on. xvfb is that display. Without it the
-        # GUI tests do not fail -- they error at Tk() -- so this is not
-        # optional dressing.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install the project
         # --locked fails the build if uv.lock no longer matches pyproject.toml,
-        # rather than quietly resolving something different from what a
-        # developer's machine has.
+        # rather than quietly resolving something different.
         run: uv sync --locked
 
-      - name: Confirm the GUI tests can really run
-        # tests/test_gui.py skips itself when Tkinter is missing, which is right
-        # for a Pi with no display stack and wrong for CI: a silent skip of two
-        # hundred tests reads as a green build. Fail here instead.
+      - name: Confirm the window tests can really run
+        # The window tests skip themselves when Tkinter is missing, and the
+        # type-fitting ones when the fonts cannot scale. Both are right on a
+        # machine that cannot do those things and wrong here, where a skip
+        # would read as a pass. Fail instead.
         run: |
           xvfb-run -a uv run python - <<'PY'
-          import sys, tkinter
+          import sys, tkinter, tkinter.font as tkfont
           root = tkinter.Tk()
           root.withdraw()
-          print(f"python {sys.version.split()[0]}  Tk {tkinter.TkVersion}")
+          family = tkfont.nametofont("TkDefaultFont").actual("family")
+          small = tkfont.Font(family=family, size=10).measure("594.8 (23x)")
+          large = tkfont.Font(family=family, size=40).measure("594.8 (23x)")
+          print(f"python {sys.version.split()[0]}  Tk {tkinter.TkVersion}  {family}")
+          print(f"10pt {small}px, 40pt {large}px")
           root.destroy()
+          if large <= small * 2:
+              sys.exit(f"fonts do not scale ({family!r}); the type tests would skip")
           PY
 
       - name: Lint and format
@@ -71,6 +86,35 @@ jobs:
 
       - name: Tests
         run: xvfb-run -a uv run pytest -q
+
+  python-39:
+    # The oldest Python pyproject.toml still claims. Python 3.9 reached end of
+    # life in October 2025 and Pi OS Bullseye, which shipped it, in August 2026,
+    # so there is no Debian image left to test it in: this uses uv's build, and
+    # the type-fitting tests skip because its Tk cannot scale fonts.
+    name: Python 3.9 (end of life)
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.9"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: Install the project
+        run: uv sync --locked
+
+      - name: Tests
+        run: xvfb-run -a uv run pytest -q -rs
 
   shell:
     name: Deployment scripts

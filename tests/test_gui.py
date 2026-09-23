@@ -7,6 +7,7 @@ module skips where Tk cannot open a display, so a headless CI still passes.
 
 from __future__ import annotations
 
+import gc
 import math
 import subprocess
 import sys
@@ -56,6 +57,62 @@ def root():
     widget.withdraw()
     yield widget
     widget.destroy()
+    del widget
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def collect_tk_on_the_main_thread():
+    """Free each test's Tk interpreters here, before anything else can.
+
+    A closed window's interpreter is left in a reference cycle, so it is freed
+    by the garbage collector -- which runs on whichever thread happens to be
+    allocating at the time. Later tests start background threads of their own
+    (every configuration-page test runs a controller), and when one of those
+    triggered the collection, Tcl found its interpreter being deleted from a
+    thread that did not create it and aborted the whole process:
+
+        Tcl_AsyncDelete: async handler deleted by the wrong thread
+
+    Collecting straight after each test, on the main thread, leaves nothing Tk
+    lying around for another thread to find.
+    """
+    yield
+    gc.collect()
+
+
+def fonts_scale(widget) -> bool:
+    """Whether this Tk can draw type at the size it is asked for.
+
+    Not every Tk can. One built without Xft uses only the X server's core
+    bitmap fonts, and a bare X server has one: ``fixed``, at nine points,
+    whatever size is requested. uv's own Python builds are like that on Linux,
+    with or without fonts installed. Debian's ``python3-tk`` is not -- it brings
+    DejaVu with it and scales exactly -- and that is what a Pi runs.
+    """
+    import tkinter.font as tkfont
+
+    from megalink_viewer.gui import _default_font
+
+    # Through the same helper the display uses: nametofont only took root= from
+    # Python 3.10, which is exactly the mistake this test was written with.
+    family = _default_font(tkfont, widget).actual("family")
+    text = "594.8 (23x)"
+    small = tkfont.Font(root=widget, family=family, size=10).measure(text)
+    large = tkfont.Font(root=widget, family=family, size=40).measure(text)
+    return large > small * 2
+
+
+@pytest.fixture
+def scalable_fonts(root):
+    """Skip a test that is about fitting type, on a Tk that cannot resize type.
+
+    A total cannot be set smaller to fit its box if every size comes out the
+    same. The tests still run wherever it matters -- CI runs them in Debian
+    containers with the Tk a Pi actually has.
+    """
+    if not fonts_scale(root):
+        pytest.skip("this Tk cannot scale fonts (no Xft), so type fitting cannot be tested")
 
 
 @pytest.fixture
@@ -1193,6 +1250,7 @@ class TestTypeScaling:
             win.close()
 
 
+@pytest.mark.usefixtures("scalable_fonts")
 class TestFittedType:
     """Type that is sized to its box, not to the window.
 
