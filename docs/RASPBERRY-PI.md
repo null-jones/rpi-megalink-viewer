@@ -713,12 +713,22 @@ Monitors: 2
 The two screens needn't match. Each window is laid out for its own screen, so a
 720p screen beside a 1080p one gets everything at two-thirds the size.
 
-**The windows are placed directly, not by the window manager.** matchbox makes a
-window fill the whole X screen, and across two sockets that is *both* monitors:
-both firing points would pile onto one screen and leave the other blank. So a
-two-screen display sets `overrideredirect` and its own geometry, and matchbox
-leaves it alone. In browser mode the same problem applies to `--kiosk`, which is
-swapped for `--start-fullscreen` plus an explicit `--window-position`.
+**No window manager with two screens.** matchbox, which the X session starts
+for one screen, stretches every window it manages over the whole X screen, and
+with two screens side by side that is *both* monitors. On a Pi 4 the browser
+showed one firing point across both screens. In window mode the first window was
+already matchbox's by the time it was told to place itself, and its content sat
+centred on the join, under the second window, with the first monitor plain grey.
+So with a second firing point set and two screens plugged in, the session starts
+no window manager at all, and each window places itself on its own output:
+
+- **Window mode:** each window is override-redirect, with its geometry set, from
+  the moment it is made. Set later, X ignores it until the window is next mapped.
+- **Browser mode:** each Chromium gets `--window-position` and `--window-size` for
+  its output, and `--start-fullscreen` rather than `--kiosk`, which would fill the
+  whole X screen.
+
+With one screen, matchbox runs as it always has.
 
 Chromium also needs **a separate profile per window** — given one profile it
 opens the second address as a tab in the existing window, on whichever screen
@@ -732,10 +742,12 @@ If `lane2` is set but only one screen is attached, the display says so in the
 journal and shows one firing point. A Pi Zero has one socket, so the setting is
 harmless there.
 
-**Checked on hardware:** the first try, on a Pi flashed from the image, showed
-both screens mirrored, which is what led to laying them out. Laying them out,
-and the settings page, are covered by tests and were tried on a two-monitor
-virtual screen. They have not been on a Pi with two screens again yet.
+**On hardware so far:** the first try, on a Pi flashed from the image, showed
+both screens mirrored, which is what led to laying them out. The second, with
+them laid out, showed the window-manager problem above in both modes. Both
+were reproduced on a two-monitor virtual screen with matchbox running, and are
+fixed there, in window mode and with Chromium. A third try on the Pi is what
+tells whether they are fixed on the real thing.
 
 ---
 

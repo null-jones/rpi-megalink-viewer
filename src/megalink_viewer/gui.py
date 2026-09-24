@@ -553,6 +553,7 @@ class LaneWindow:
         parent: Any = None,
         find_reach: Any = None,
         read_network: Any = None,
+        screen: Any = None,
     ) -> None:
         tk, ttk, tkfont = _import_tk()
         self._tk = tk
@@ -584,7 +585,16 @@ class LaneWindow:
         self.root.configure(bg=CHROME)
         self.root.minsize(640, 420)
         self._fullscreen = False
-        if fullscreen:
+        if screen is not None:
+            # One of two outputs, and this before anything can put the window
+            # on the screen. X applies override-redirect only when a window is
+            # mapped: set later, the window manager already had it, and kept it
+            # stretched across both monitors -- the first monitor showed plain
+            # grey, with the window's content centred under the second one.
+            with contextlib.suppress(Exception):
+                self.root.overrideredirect(True)
+            self.root.geometry(screen.geometry)
+        elif fullscreen:
             self.toggle_fullscreen()
 
         self._style(ttk)
@@ -617,6 +627,8 @@ class LaneWindow:
         self._last_size = (0, 0)
         self._build(tk, ttk)
         self._bind()
+        if screen is not None:
+            self.place_on(screen)
         self.rescale(force=True)
 
     # -- construction ------------------------------------------------------

@@ -491,6 +491,13 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
         print(
             f"opening a window on DISPLAY={os.environ.get('DISPLAY', '(unset)')}", file=sys.stderr
         )
+        # A Pi 4 Model B and a Pi 5 each have two HDMI sockets. With a second
+        # firing point configured, and a second screen actually attached, each
+        # gets a window of its own on it -- told which before it is made, so
+        # the window manager never takes it and stretches it over both.
+        pair = two_screens(
+            config.display.lane2, lambda message: print(f"megalink: {message}", file=sys.stderr)
+        )
         window = LaneWindow(
             controller,
             controller.config.lane or "1",
@@ -499,15 +506,9 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             on_lane_change=controller.set_lane,
             should_stop=should_stop,
             lane_source=lambda: controller.config.lane,
+            screen=pair[0] if pair is not None else None,
         )
-
-        # A Pi 4 Model B and a Pi 5 each have two HDMI sockets. With a second
-        # firing point configured, and a second screen actually attached, each
-        # gets a window of its own placed on it.
         second = None
-        pair = two_screens(
-            config.display.lane2, lambda message: print(f"megalink: {message}", file=sys.stderr)
-        )
         if pair is not None:
             second = LaneWindow(
                 controller,
@@ -516,9 +517,8 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
                 should_stop=should_stop,
                 lane_source=lambda: controller.config.display.lane2,
                 parent=window.root,
+                screen=pair[1],
             )
-            window.place_on(pair[0])
-            second.place_on(pair[1])
             window.screen_label, second.screen_label = "screen 1", "screen 2"
             print(
                 f"two screens: {pair[0].name} showing lane {window.lane}, "

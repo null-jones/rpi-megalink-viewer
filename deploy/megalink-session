@@ -10,8 +10,33 @@
 set -eu
 
 VENV="${MEGALINK_VENV:-/opt/megalink/venv}"
+CONFIG="${MEGALINK_CONFIG:-/etc/megalink/display.json}"
 
-if command -v matchbox-window-manager >/dev/null 2>&1; then
+# Except with a firing point on each of two screens. matchbox stretches every
+# window it manages over the whole X screen, and with two screens side by side
+# that is both monitors: a browser showed one firing point across both, and a
+# window it had taken showed plain grey. Each window places itself on its own
+# screen instead, which needs nothing managing it.
+two_screens() {
+    lane2="$(
+        "$VENV/bin/python" - "$CONFIG" 2>/dev/null <<'PYTHON' || true
+import json, sys
+try:
+    with open(sys.argv[1]) as handle:
+        print(str(json.load(handle).get("display", {}).get("lane2") or "").strip())
+except Exception:
+    print("")
+PYTHON
+    )"
+    [ -n "$lane2" ] || return 1
+    # Only with two actually plugged in; with one, the display shows one
+    # firing point full-screen, and that wants the window manager as ever.
+    [ "$(xrandr --query 2>/dev/null | grep -c ' connected')" -ge 2 ]
+}
+
+if two_screens; then
+    echo "two screens: no window manager, each window is placed on its own" >&2
+elif command -v matchbox-window-manager >/dev/null 2>&1; then
     matchbox-window-manager -use_titlebar no -use_cursor no &
 fi
 

@@ -1120,6 +1120,27 @@ class TestTwoScreens:
             second.close()
             first.close()
 
+    def test_a_window_for_one_screen_is_its_own_from_the_start(self, gui, root, v2_state):
+        # Override-redirect set after the window is on screen does nothing until
+        # it is next mapped: the window manager had already taken the first
+        # window, stretched it over both monitors, and left the first grey.
+        from megalink_viewer.outputs import Screen
+
+        win = gui.LaneWindow(
+            v2_state,
+            "9",
+            interval_ms=10_000,
+            fullscreen=True,
+            screen=Screen("HDMI-1", 1920, 1080, 0, 0),
+        )
+        try:
+            assert win.root.overrideredirect()
+            assert not win._fullscreen
+            win.root.update_idletasks()
+            assert win.root.geometry().startswith("1920x1080")
+        finally:
+            win.close()
+
     def test_asked_to_identify_each_screen_says_which_it_is(self, gui, root, v2_state):
         # "Which screen is screen 2?" is the question, on a Pi with two.
         v2_state.identifying = lambda: True
