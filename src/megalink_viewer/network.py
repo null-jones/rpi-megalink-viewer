@@ -278,10 +278,12 @@ class NetworkManager:
         run: Callable[..., tuple[int, str]] | None = None,
         connections: Path = CONNECTIONS,
         interface: str = "wlan0",
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._run = run or _run
         self.connections = Path(connections)
         self.interface = interface
+        self._sleep = sleep
 
     def available(self) -> bool:
         code, out = self._run(["nmcli", "-t", "-f", "RUNNING", "general"])
@@ -318,22 +320,53 @@ class NetworkManager:
             return 0
         return sum(1 for line in out.splitlines() if line.startswith("Station "))
 
-    def scan(self) -> list[dict[str, Any]]:
-        code, out = self._run(
-            [
-                "nmcli",
-                "-t",
-                "-f",
-                "SSID,SIGNAL,SECURITY",
-                "device",
-                "wifi",
-                "list",
-                "--rescan",
-                "yes",
-            ],
-            timeout=45.0,
-        )
-        return parse_scan(out) if code == 0 else []
+    def wait_until_ready(self, timeout: float = 20.0) -> bool:
+        """Wait for the Wi-Fi to be usable, after its radio is switched on.
+
+        For a few seconds after that, NetworkManager calls the device
+        "unavailable", and a scan finds nothing. On a card with no Wi-Fi
+        country, which is exactly the card that needs the hotspot, the radio
+        starts off -- so the scan before the first hotspot came up empty, and
+        the settings page had no networks to offer. A machine with no such
+        device at all is not waited for.
+        """
+        for _ in range(max(1, int(timeout))):
+            states = [d.state for d in self.devices() if d.name == self.interface]
+            if not states:
+                return False
+            if states[0] not in ("unavailable", "unmanaged"):
+                return True
+            self._sleep(1.0)
+        return False
+
+    def scan(self, attempts: int = 3, pause: float = 3.0) -> list[dict[str, Any]]:
+        """The networks in range, strongest first; empty if none were found.
+
+        Asked more than once when the answer is nothing, because nothing is
+        what a radio just switched on sees at first, and a scan asked for
+        straight after another one is refused.
+        """
+        for attempt in range(attempts):
+            if attempt:
+                self._sleep(pause)
+            code, out = self._run(
+                [
+                    "nmcli",
+                    "-t",
+                    "-f",
+                    "SSID,SIGNAL,SECURITY",
+                    "device",
+                    "wifi",
+                    "list",
+                    "--rescan",
+                    "yes",
+                ],
+                timeout=45.0,
+            )
+            found = parse_scan(out) if code == 0 else []
+            if found:
+                return found
+        return []
 
     def save(self, filename: str, text: str) -> None:
         """Write a connection file where NetworkManager will read it."""
@@ -710,7 +743,9 @@ def run(
         for action in decide(clock(), seen, memory):
             if action == "start_hotspot":
                 nm.enable_radio()
-                # Look round first: while the radio is a hotspot it cannot.
+                # Look round first: while the radio is a hotspot it cannot, so
+                # this is the list the settings page offers until the next look.
+                nm.wait_until_ready()
                 networks = nm.scan() or networks
                 nm.save(
                     f"{HOTSPOT_ID}.nmconnection",
@@ -726,6 +761,10 @@ def run(
                     report("the hotspot would not start")
             elif action == "stop_hotspot":
                 nm.down(HOTSPOT_ID)
+                if memory.mode == "retrying":
+                    # The radio is free for a while: bring the list up to date.
+                    nm.wait_until_ready()
+                    networks = nm.scan() or networks
             elif action == "join" and pending:
                 nm.enable_radio()
                 if pending.get("country"):

@@ -446,6 +446,36 @@ class FakeNmcli:
         return 0, ""
 
 
+class RadioOffNmcli(FakeNmcli):
+    """A Pi flashed with no Wi-Fi country: its radio starts switched off.
+
+    Once switched on, the device stays "unavailable" for a few looks, and a
+    scan finds nothing until it is ready -- which is what left the settings
+    page with no networks to offer on a real display.
+    """
+
+    def __init__(self, ready_after=3, scans=("Range:70:WPA2\n",)):
+        super().__init__("wlan0:wifi:unavailable:\n")
+        self.radio_on = False
+        self.ready_after = ready_after
+        self.scans = list(scans)
+
+    def __call__(self, args, timeout=30.0):
+        if args == ["nmcli", "radio", "wifi", "on"]:
+            self.radio_on = True
+        polled = "device" in args and "status" in args
+        if polled and self.radio_on and "unavailable" in self.devices:
+            self.ready_after -= 1
+            if self.ready_after <= 0:
+                self.devices = "wlan0:wifi:disconnected:\n"
+        if "wifi" in args and "list" in args:
+            self.calls.append(args)
+            if "unavailable" in self.devices:
+                return 0, ""
+            return 0, self.scans.pop(0) if len(self.scans) > 1 else self.scans[0]
+        return super().__call__(args, timeout)
+
+
 class TestNetworkManager:
     def test_a_client_connection_counts_as_connected(self, tmp_path):
         nm = network.NetworkManager(FakeNmcli("wlan0:wifi:connected:Range\n"), tmp_path)
@@ -461,6 +491,45 @@ class TestNetworkManager:
             FakeNmcli("eth0:ethernet:connected:Wired\nwlan0:wifi:disconnected:\n"), tmp_path
         )
         assert network.observe(nm, None).connected
+
+    def test_it_waits_for_a_radio_just_switched_on(self, tmp_path):
+        fake, slept = RadioOffNmcli(ready_after=3), []
+        nm = network.NetworkManager(fake, tmp_path, sleep=slept.append)
+        nm.enable_radio()
+        assert nm.wait_until_ready()
+        assert slept == [1.0, 1.0]
+
+    def test_it_does_not_wait_for_a_device_there_is_not(self, tmp_path):
+        slept = []
+        nm = network.NetworkManager(
+            FakeNmcli("eth0:ethernet:connected:Wired\n"), tmp_path, sleep=slept.append
+        )
+        assert not nm.wait_until_ready()
+        assert slept == []
+
+    def test_it_gives_up_waiting_in_the_end(self, tmp_path):
+        slept = []
+        nm = network.NetworkManager(
+            FakeNmcli("wlan0:wifi:unavailable:\n"), tmp_path, sleep=slept.append
+        )
+        assert not nm.wait_until_ready(timeout=5)
+        assert len(slept) == 5
+
+    def test_a_scan_that_finds_nothing_is_tried_again(self, tmp_path):
+        fake, slept = RadioOffNmcli(ready_after=1, scans=("", "Range:70:WPA2\n")), []
+        fake.radio_on = True
+        nm = network.NetworkManager(fake, tmp_path, sleep=slept.append)
+        nm.wait_until_ready()
+        assert [n["ssid"] for n in nm.scan()] == ["Range"]
+        assert slept == [3.0]
+
+    def test_with_nothing_in_range_it_stops_trying(self, tmp_path):
+        fake, slept = RadioOffNmcli(ready_after=1, scans=("",)), []
+        fake.radio_on = True
+        nm = network.NetworkManager(fake, tmp_path, sleep=slept.append)
+        nm.wait_until_ready()
+        assert nm.scan(attempts=3) == []
+        assert slept == [3.0, 3.0]
 
     def test_connection_files_are_private_and_reloaded(self, tmp_path):
         fake = FakeNmcli()
@@ -478,7 +547,7 @@ class TestNetworkManager:
         ticks = iter(range(0, 10_000, 5))
         stops = iter([False, False, True])
         network.run(
-            network.NetworkManager(fake, tmp_path / "nm"),
+            network.NetworkManager(fake, tmp_path / "nm", sleep=lambda _s: None),
             stop=lambda: next(stops),
             report=lambda _m: None,
             clock=lambda: next(ticks),
@@ -503,7 +572,7 @@ class TestTheService:
         remaining = iter([False] * ticks + [True])
         said = []
         network.run(
-            network.NetworkManager(fake, tmp_path / "nm"),
+            network.NetworkManager(fake, tmp_path / "nm", sleep=lambda _s: None),
             stop=lambda: next(remaining),
             name="fp-09",
             report=said.append,
@@ -533,6 +602,23 @@ class TestTheService:
         self.run(tmp_path, FakeNmcli(), ticks=10)
         text = (tmp_path / "nm" / f"{HOTSPOT}.nmconnection").read_text()
         assert "mode=ap" in text
+
+    def test_a_radio_that_starts_off_still_finds_the_networks(self, tmp_path):
+        # A card flashed with no Wi-Fi country, as the release image is: the
+        # list on the settings page came up empty on a real display.
+        out, _said = self.run(tmp_path, RadioOffNmcli(ready_after=3), ticks=10)
+        assert out["mode"] == "hotspot"
+        assert [n["ssid"] for n in out["networks"]] == ["Range"]
+
+    def test_a_look_round_from_the_hotspot_brings_the_list_up_to_date(self, tmp_path):
+        fake = RadioOffNmcli(ready_after=1, scans=("Range:70:WPA2\n", "Clubhouse:60:WPA2\n"))
+        # Long enough to reach the first look round, five minutes in.
+        out, _said = self.run(tmp_path, fake, ticks=40)
+        names = [n["ssid"] for n in out["networks"]]
+        assert names == ["Clubhouse"]
+        # Scanned while the hotspot was down, not only when it came back up.
+        down = next(i for i, c in enumerate(fake.calls) if c[-3:-1] == ["down", "id"])
+        assert any("list" in c for c in fake.calls[down : down + 4])
 
     def test_it_looks_round_before_the_radio_becomes_a_hotspot(self, tmp_path):
         # Once it is a hotspot it cannot scan, so the list is taken first.
@@ -593,7 +679,7 @@ class TestTheRadio:
         clock = iter(range(0, 100_000, 5))
         remaining = iter([False] * ticks + [True])
         network.run(
-            network.NetworkManager(fake, tmp_path / "nm"),
+            network.NetworkManager(fake, tmp_path / "nm", sleep=lambda _s: None),
             stop=lambda: next(remaining),
             report=lambda _m: None,
             clock=lambda: next(clock),

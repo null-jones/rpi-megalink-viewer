@@ -747,6 +747,14 @@ Then the screen shows two codes: one a phone's camera joins the network from, an
 one that opens the settings page on it (`http://10.42.0.1:8080/`). Phones usually say
 the network has no internet; staying connected is fine.
 
+**The list of networks** on the settings page is from a scan just before the
+hotspot starts. Once the radio is a hotspot, NetworkManager will not scan with
+it. The list is brought up to date at each look round. If it is empty, the page
+says so, and *Another network…* takes a name typed in. The first image scanned
+the moment it switched the radio on, while the Wi-Fi was still "unavailable",
+and so always offered nothing. It now waits for the Wi-Fi to be ready and scans
+again if the first scan finds nothing.
+
 The hotspot's password is made once, from letters that cannot be mistaken for
 one another, and kept in `/etc/megalink/hotspot.json` — so a sticker on the back
 of a display stays true.

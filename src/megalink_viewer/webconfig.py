@@ -603,6 +603,8 @@ margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:
 <section id="wifisec" hidden><h2>Wi-Fi</h2>
 <div class="note" id="wifistate"></div>
 <label><span>Network</span><select id="wifilist"></select></label>
+<div class="note" id="wifinone" hidden>It found no networks when it last looked. Choose
+<b>Another network…</b> and type the network's name.</div>
 <label id="wifiother" hidden><span>Name</span><input id="wifissid" autocomplete="off"></label>
 <label><span>Password</span><input id="wifipass" type="password" autocomplete="off"
   placeholder="leave empty for an open network"></label>
@@ -686,6 +688,7 @@ async function showWifi() {
   list.appendChild(other);
   if (keep) list.value = keep;
   $("wifiother").hidden = list.value !== "";
+  $("wifinone").hidden = w.networks.length > 0;
   // Radio rules differ by country, and a Pi with none set keeps to the ones
   // that are safe everywhere, which rules out much of 5 GHz.
   if (w.country && !$("wificountry").value) $("wificountry").value = w.country;
