@@ -274,3 +274,93 @@ class TestTokenPassThrough:
             armed.stop()
             display_server.stop()
             controller.stop()
+
+
+class TestEachDisplayItsOwn:
+    """The page works out each display's firing points and sends them as one."""
+
+    def test_each_display_gets_its_own_change(self, fleet):
+        server, displays = fleet
+        _status, body = get(server, "/api/fleet/displays")
+        ids = {d["name"]: d["id"] for d in body["displays"]}
+        status, _out = post(
+            server,
+            "/api/fleet/apply",
+            {
+                "targets": list(ids.values()),
+                "patch": {"host": "stord-pk"},
+                "each": {
+                    ids["firing-point-7"]: {"lane": "12"},
+                    ids["firing-point-9"]: {"lane": "13", "display": {"lane2": "14"}},
+                },
+            },
+        )
+        assert status == 200
+        lanes = {c.config.name: (c.config.lane, c.config.display.lane2) for c, _s, _p in displays}
+        assert lanes == {"firing-point-7": ("12", ""), "firing-point-9": ("13", "14")}
+
+    def test_a_display_s_own_settings_are_merged_not_replaced(self, fleet):
+        # Its second screen, set as part of the display section, must not
+        # take the rest of that section with it.
+        server, displays = fleet
+        controller = displays[0][0]
+        controller.config.display.idle_text = "CLOSED"
+        _status, body = get(server, "/api/fleet/displays")
+        target = next(d["id"] for d in body["displays"] if d["name"] == controller.config.name)
+        post(
+            server,
+            "/api/fleet/apply",
+            {"targets": [target], "each": {target: {"display": {"lane2": "3"}}}},
+        )
+        assert controller.config.display.lane2 == "3"
+        assert controller.config.display.idle_text == "CLOSED"
+
+    def test_a_bad_each_is_refused(self, fleet):
+        server, _displays = fleet
+        _status, body = get(server, "/api/fleet/displays")
+        target = body["displays"][0]["id"]
+        status, out = post(
+            server, "/api/fleet/apply", {"targets": [target], "each": {target: "lane=1"}}
+        )
+        assert status == 400 and "each must" in out["error"]
+
+
+class TestTheAnnouncement:
+    def test_it_carries_the_second_screen_and_the_names(self, two_displays):
+        from megalink_viewer.beacon import payload_for
+
+        controller = two_displays[0][0]
+        controller.config.display.lane2 = "10"
+        controller.screens = ["HDMI-1", "HDMI-2"]
+        payload = payload_for(controller)
+        assert payload["lane2"] == "10" and payload["screens"] == 2
+        assert payload["mode"] == "gui"
+        assert payload["host_name"] == "Stord PK"
+
+
+class TestLookupsOnALaptop:
+    """The standalone dashboard offers the clubs to choose from as well."""
+
+    def test_the_clubs_and_ranges_are_there(self, v2_pistol):
+        from conftest import FakeClient
+
+        client = FakeClient(
+            trees={("stord-pk", "1-10"): v2_pistol},
+            active={"stord-pk": {"1-10": {"hostName": "Stord PK", "rangeName": "1-10"}}},
+        )
+        server = FleetServer(port=0, bind="127.0.0.1", beacon_port=0, client=client).start()
+        try:
+            _status, hosts = get(server, "/api/hosts")
+            assert [h["name"] for h in hosts["hosts"]] == ["Stord PK"]
+            _status, ranges = get(server, "/api/ranges?host=stord-pk")
+            assert [r["key"] for r in ranges["ranges"]] == ["1-10"]
+        finally:
+            server.stop()
+
+    def test_without_a_client_there_are_none(self):
+        server = FleetServer(port=0, bind="127.0.0.1", beacon_port=0).start()
+        try:
+            with pytest.raises(urllib.error.HTTPError):
+                get(server, "/api/hosts")
+        finally:
+            server.stop()

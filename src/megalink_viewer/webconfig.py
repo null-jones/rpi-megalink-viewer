@@ -29,21 +29,16 @@ from __future__ import annotations
 import hmac
 import html
 import threading
-import time
 from typing import Any
 
 from . import address, network, qr
-from .client import MegalinkError
 from .config import LOGO_SUFFIXES, ConfigError, find_logo, logo_path, write_durably
 from .controller import Controller
 from .fleet import PAGE as FLEET_PAGE
 from .fleet import Routes as FleetRoutes
 from .httpbase import DRAIN_LIMIT, BodyTooLarge, JSONHandler, Server
-
-#: Discovery answers are cached for this long. The live host list changes on the
-#: order of minutes, and a dropdown should not put a Pi Zero on the network for
-#: every keystroke.
-CACHE_SECONDS = 20.0
+from .lookups import Cache as _Cache
+from .lookups import Lookups
 
 #: A club badge is small. This is generous and still bounds what a display will
 #: read into memory.
@@ -57,26 +52,6 @@ def _image_kind(raw: bytes) -> str | None:
     if raw[:6] in (b"GIF87a", b"GIF89a"):
         return ".gif"
     return None
-
-
-class _Cache:
-    """A tiny time-based cache, so browsing the dropdowns stays cheap."""
-
-    def __init__(self, seconds: float = CACHE_SECONDS) -> None:
-        self._seconds = seconds
-        self._entries: dict[str, tuple[float, Any]] = {}
-        self._lock = threading.Lock()
-
-    def get(self, key: str, produce: Any) -> Any:
-        now = time.monotonic()
-        with self._lock:
-            found = self._entries.get(key)
-            if found is not None and now - found[0] < self._seconds:
-                return found[1]
-        value = produce()
-        with self._lock:
-            self._entries[key] = (now, value)
-        return value
 
 
 def _peer_count(fleet: Any) -> int:
@@ -98,6 +73,7 @@ def make_handler(
     each is capable of managing the lot and there is no separate service to run.
     """
     shared = cache if cache is not None else _Cache()
+    lookups = Lookups(controller.client, shared)
     fleet = FleetRoutes(listener, controller.config.web.token) if listener is not None else None
 
     class Handler(JSONHandler):
@@ -112,40 +88,6 @@ def make_handler(
             supplied = self.headers.get("X-Megalink-Token") or self.query.get("token") or ""
             if not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
                 raise PermissionError("a valid X-Megalink-Token is required")
-
-        # -- discovery -----------------------------------------------------
-
-        def _hosts(self) -> Any:
-            def produce() -> Any:
-                active = controller.client.active()
-                return [
-                    {
-                        "host": host,
-                        "name": entries[0].host_name if entries else host,
-                        "ranges": [
-                            {"key": r.key, "name": r.name, "event": r.event} for r in entries
-                        ],
-                    }
-                    for host, entries in sorted(active.items())
-                ]
-
-            return shared.get("hosts", produce)
-
-        def _ranges(self, host: str) -> Any:
-            def produce() -> Any:
-                return [
-                    {"key": r.key, "name": r.name, "protocol": r.protocol, "event": r.event}
-                    for r in controller.client.ranges(host)
-                ]
-
-            return shared.get(f"ranges:{host}", produce)
-
-        def _lanes(self, host: str, range_name: str) -> Any:
-            def produce() -> Any:
-                source = controller.client.resolve(host, range_name)
-                return controller.client.source_lanes(source)
-
-            return shared.get(f"lanes:{host}:{range_name}", produce)
 
         # -- the logo ------------------------------------------------------
 
@@ -346,30 +288,10 @@ def make_handler(
                 controller.identify()
                 return 200, {"identifying": True}
 
-            if path == "/api/hosts":
-                try:
-                    return 200, {"hosts": self._hosts()}
-                except MegalinkError as exc:
-                    return 502, {"error": str(exc)}
-
-            if path == "/api/ranges":
-                host = self.query.get("host") or controller.config.host
-                if not host:
-                    raise ValueError("a host is required")
-                try:
-                    return 200, {"host": host, "ranges": self._ranges(host)}
-                except MegalinkError as exc:
-                    return 502, {"error": str(exc)}
-
-            if path == "/api/lanes":
-                host = self.query.get("host") or controller.config.host
-                range_name = self.query.get("range") or controller.config.range
-                if not host:
-                    raise ValueError("a host is required")
-                try:
-                    return 200, {"lanes": self._lanes(host, range_name)}
-                except MegalinkError as exc:
-                    return 502, {"error": str(exc)}
+            if path in ("/api/hosts", "/api/ranges", "/api/lanes"):
+                return lookups.route(
+                    path, self.query, controller.config.host, controller.config.range
+                )
 
             return None
 

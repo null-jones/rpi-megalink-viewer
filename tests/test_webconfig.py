@@ -407,7 +407,7 @@ class TestFleetOnTheDisplay:
         with urllib.request.urlopen(url, timeout=10) as response:
             assert response.status == 200
             assert response.headers.get_content_type() == "text/html"
-            assert b"Megalink displays" in response.read()
+            assert b"Range displays" in response.read()
 
     def test_the_display_lists_its_neighbours(self, meshed):
         _controller, server = meshed

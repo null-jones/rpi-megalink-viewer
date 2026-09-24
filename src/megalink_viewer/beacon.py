@@ -44,7 +44,7 @@ def encode(payload: dict[str, Any]) -> bytes:
     # Drop the descriptive extras rather than the identity.
     essential = {
         key: body[key]
-        for key in ("magic", "protocol", "name", "web", "host", "range", "lane")
+        for key in ("magic", "protocol", "name", "web", "host", "range", "lane", "lane2")
         if key in body
     }
     return json.dumps(essential, default=str).encode("utf-8")
@@ -322,6 +322,15 @@ def payload_for(controller: Any) -> dict[str, Any]:
         "host": status.get("host"),
         "range": status.get("range"),
         "lane": status.get("lane"),
+        # The second screen, and how many there are, so the range page can show
+        # and number both firing points of a Pi with two.
+        "lane2": status.get("lane2"),
+        "screens": len(status.get("screens") or []),
+        "mode": config.display.mode,
+        # The club's and the range's own names, for people: "Stord PK", not
+        # the "stord-pk" Megalink files it under.
+        "host_name": status.get("host_name"),
+        "range_name": status.get("range_name"),
         "showing": status.get("showing"),
         "shooter": status.get("shooter"),
         "total": status.get("total"),

@@ -629,6 +629,7 @@ def cmd_fleet(args: argparse.Namespace, client: MegalinkClient) -> int:
         bind=args.bind,
         beacon_port=args.beacon_port,
         token=args.token or "",
+        client=client,
     )
     try:
         server.start()

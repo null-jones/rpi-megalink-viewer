@@ -602,10 +602,14 @@ difference between setting up twenty firing points and setting up one twenty
 times. `megalink fleet --open` serves the same page from a laptop, if you would
 rather work from one; it is no longer needed.
 
-The useful part is **consecutive numbering**: select the displays in order, set
-the club and range, put `1` in the firing-point box with "count up per display",
-and they take lanes 1, 2, 3… in one action. Each row also links to that
-display's own page, and Identify works across a selection.
+Each display's firing point can be changed in its own row, with a second box on
+a Pi with two screens. For several at once, select them, choose the club and
+range from lists, and number them from a starting firing point: they are
+numbered in the order they are listed, sorted by firing point or by name, and a
+display with two screens takes two numbers. A preview beside each firing point
+shows what it will get before anything changes. Each row links to that
+display's own page, and Identify works across a selection. On a phone the rows
+become cards.
 
 If one display is switched off, the others still take the change and the page
 says which one failed rather than silently doing half the job.
