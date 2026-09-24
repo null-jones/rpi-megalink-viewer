@@ -117,6 +117,7 @@ jobs:
           # The image is built on a build machine, by pi-gen, which is bash.
           parses bash image/*.sh image/stage-megalink/prerun.sh \
             image/stage-megalink/*/*.sh
+          parses sh docs/guide/tools/*.sh
           exit "$failed"
 
       # From the distribution rather than a third-party action. An action
@@ -129,4 +130,24 @@ jobs:
           shellcheck --version | head -2
           shellcheck -S warning deploy/*.sh deploy/megalink-launch deploy/megalink-session \
             deploy/megalink-firstboot image/*.sh image/stage-megalink/prerun.sh \
-            image/stage-megalink/*/*.sh
+            image/stage-megalink/*/*.sh docs/guide/tools/*.sh
+
+  # The printable setup guide, built as a release builds it, so a change that
+  # breaks it is found here rather than on the day of a release.
+  guide:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-markdown weasyprint \
+            fonts-dejavu-core fonts-inter
+      - name: Build the guide
+        run: python3 docs/guide/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: megalink-viewer-guide
+          path: dist/megalink-viewer-guide-*.pdf
+          retention-days: 7

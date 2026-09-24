@@ -10,7 +10,7 @@ LANE ?= 1
 
 .DEFAULT_GOAL := help
 .PHONY: help install run gui watch show hosts ranges lanes display fleet config \
-	test test-watch lint format check clean build push diagnose pi-install
+	test test-watch lint format check clean build push diagnose pi-install guide screenshots
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -68,6 +68,12 @@ check: lint test ## Everything CI would run
 
 build: ## Build the wheel and sdist
 	$(UV) build
+
+guide: ## Build the printable setup guide (needs Docker)
+	docs/guide/tools/pdf.sh
+
+screenshots: ## Take the guide's screenshots again (needs Docker)
+	docs/guide/tools/screenshots.sh
 
 clean: ## Remove build and cache artefacts
 	rm -rf dist build .pytest_cache .ruff_cache

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 300" font-family="Inter, DejaVu Sans, sans-serif">
+  <title>How a display fits together</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+  </defs>
+
+  <!-- Megalink Live -->
+  <rect x="20" y="30" width="170" height="80" rx="12" fill="#f2f4f6" stroke="#8c959f" stroke-width="2"/>
+  <text x="105" y="63" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2328">Megalink Live</text>
+  <text x="105" y="84" text-anchor="middle" font-size="12" fill="#57606a">the scores, on the internet</text>
+
+  <!-- The range's network -->
+  <rect x="255" y="30" width="170" height="80" rx="12" fill="#f2f4f6" stroke="#8c959f" stroke-width="2"/>
+  <text x="340" y="63" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2328">The range's Wi-Fi</text>
+  <text x="340" y="84" text-anchor="middle" font-size="12" fill="#57606a">or a network cable</text>
+
+  <!-- The display -->
+  <rect x="490" y="30" width="170" height="80" rx="12" fill="#e8f3fb" stroke="#4aa3df" stroke-width="2"/>
+  <text x="575" y="63" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2328">The display</text>
+  <text x="575" y="84" text-anchor="middle" font-size="12" fill="#1f5f8b">a Raspberry Pi</text>
+
+  <!-- The screen -->
+  <rect x="490" y="190" width="170" height="80" rx="12" fill="#2b2b2b"/>
+  <text x="575" y="224" text-anchor="middle" font-size="16" font-weight="700" fill="#f2f2f2">The screen</text>
+  <text x="575" y="245" text-anchor="middle" font-size="12" fill="#b0b4b9">beside the firing point</text>
+
+  <!-- A phone -->
+  <rect x="255" y="190" width="170" height="80" rx="12" fill="#f2f4f6" stroke="#8c959f" stroke-width="2"/>
+  <text x="340" y="224" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2328">Your phone</text>
+  <text x="340" y="245" text-anchor="middle" font-size="12" fill="#57606a">to set the display up</text>
+
+  <g stroke="#57606a" stroke-width="2" fill="none">
+    <line x1="194" y1="70" x2="250" y2="70" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <line x1="429" y1="70" x2="485" y2="70" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <line x1="575" y1="114" x2="575" y2="185" marker-end="url(#arrow)"/>
+    <path d="M 429 230 C 470 230 460 130 520 114" marker-end="url(#arrow)" stroke-dasharray="6 5"/>
+  </g>
+  <text x="583" y="155" font-size="12" fill="#57606a">HDMI</text>
+  <text x="438" y="182" font-size="12" fill="#57606a">settings page</text>
+</svg>

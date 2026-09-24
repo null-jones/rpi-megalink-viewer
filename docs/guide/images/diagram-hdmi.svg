@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 250" font-family="Inter, DejaVu Sans, sans-serif">
+  <title>The sockets along one edge of a Raspberry Pi 4 or Pi 5</title>
+  <!-- The edge of the board, seen from above, with its three sockets. -->
+  <rect x="40" y="30" width="560" height="110" rx="10" fill="#2f6b4f"/>
+  <text x="320" y="72" text-anchor="middle" fill="#dfeee6" font-size="15" font-weight="600">Raspberry Pi 4 or Pi 5, from above</text>
+  <text x="320" y="94" text-anchor="middle" fill="#b9d8c7" font-size="12">the edge with the power socket</text>
+
+  <!-- USB-C power -->
+  <rect x="100" y="126" width="54" height="26" rx="10" fill="#c9ccd1" stroke="#555a61" stroke-width="2"/>
+  <!-- Micro HDMI 0 and 1 -->
+  <rect x="226" y="126" width="46" height="24" rx="4" fill="#c9ccd1" stroke="#555a61" stroke-width="2"/>
+  <rect x="338" y="126" width="46" height="24" rx="4" fill="#c9ccd1" stroke="#555a61" stroke-width="2"/>
+
+  <g stroke="#555a61" stroke-width="1.6">
+    <line x1="127" y1="156" x2="127" y2="182"/>
+    <line x1="249" y1="156" x2="249" y2="182"/>
+    <line x1="361" y1="156" x2="361" y2="182"/>
+  </g>
+  <text x="127" y="202" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2328">Power</text>
+  <text x="127" y="221" text-anchor="middle" font-size="12" fill="#57606a">USB-C</text>
+
+  <rect x="197" y="186" width="104" height="44" rx="8" fill="#e8f3fb" stroke="#4aa3df" stroke-width="2"/>
+  <text x="249" y="205" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">HDMI 0</text>
+  <text x="249" y="222" text-anchor="middle" font-size="12" fill="#1f5f8b">screen 1</text>
+
+  <rect x="309" y="186" width="104" height="44" rx="8" fill="#f2f4f6" stroke="#8c959f" stroke-width="2"/>
+  <text x="361" y="205" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">HDMI 1</text>
+  <text x="361" y="222" text-anchor="middle" font-size="12" fill="#57606a">screen 2</text>
+
+  <text x="470" y="205" font-size="12" fill="#57606a">Use HDMI 0 when</text>
+  <text x="470" y="222" font-size="12" fill="#57606a">there is one screen.</text>
+</svg>

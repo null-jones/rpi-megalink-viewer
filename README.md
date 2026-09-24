@@ -56,6 +56,11 @@ usually a range live somewhere.
 
 ## Put it on a Raspberry Pi
 
+**The setup guide** walks through all of it, with pictures, for someone who has
+never used a Raspberry Pi: [docs/guide/guide.md](docs/guide/guide.md), and as a
+PDF to print on Letter paper with every
+[release](https://github.com/null-jones/rpi-megalink-viewer/releases/latest).
+
 **The easy way: the ready-made image.** Download
 `megalink-display-<version>.img.xz` from the
 [latest release](https://github.com/null-jones/rpi-megalink-viewer/releases/latest),
@@ -191,6 +196,7 @@ badge if you upload one.
 
 | | |
 |---|---|
+| [docs/guide/guide.md](docs/guide/guide.md) | The setup guide, from an empty SD card to a screen beside every firing point |
 | [docs/RASPBERRY-PI.md](docs/RASPBERRY-PI.md) | Flashing, the boot service, X on a Lite image, the fleet, and what goes wrong |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | The Megalink Live data format, reverse-engineered: both protocol generations, the scoring rules, the target geometry |
 | [docs/DISPLAY.md](docs/DISPLAY.md) | Why the screen looks the way it does |
@@ -216,7 +222,9 @@ the same run, since a mistake in those surfaces at the range rather than here.
 
 Pushing a `v*` tag builds the SD card image with `image/build.sh`, checks its
 files with `image/check.sh`, boots it with `image/boot-test.sh` to see the
-hotspot fallback start, and attaches it to the release.
+hotspot fallback start, builds the setup guide's PDF, and attaches both to the
+release. `make guide` builds the PDF locally, and `make screenshots` takes the
+guide's pictures again from the software itself; both need Docker.
 
 ## Licence
 
