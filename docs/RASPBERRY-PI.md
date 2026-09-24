@@ -87,8 +87,24 @@ This mounts the image read-only and checks that it is what it claims to be. The
 display, hotspot and renaming services are enabled, and the packages every mode
 needs are there. No account has a usable password, SSH and the first-boot
 wizard are off, and the cloud-init seed Imager writes to is in place. On arm64,
-it also runs the image's own copy of the display. The release workflow will not
-publish an image that fails it.
+it also runs the image's own copy of the display.
+
+```bash
+sudo image/boot-test.sh dist/image/megalink-display-*.img.xz
+```
+
+This boots the image, in a container with no network at all, and checks that the
+hotspot fallback starts, counts down, and asks for the hotspot on time, and that
+the display names itself. There is no Wi-Fi chip in a container, so the hotspot
+itself is not started. It needs an arm64 machine and `systemd-nspawn`, from the
+`systemd-container` package; on a Mac, run it in a privileged Debian container.
+
+It exists because the first image passed every check in `check.sh` and still
+never started its hotspot. The service was enabled, but it was ordered after
+`cloud-init.target`, which comes after `multi-user.target`. That target comes
+after everything it starts, so systemd found a loop and dropped the service from
+every boot. Only booting shows that. The release workflow publishes no image
+that fails either script.
 
 The pi-gen release it builds from is `PI_GEN_REF` in `image/build.sh`. The
 settings it builds with are in `image/config`, and the step that installs the

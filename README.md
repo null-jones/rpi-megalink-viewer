@@ -202,8 +202,9 @@ if the fonts there cannot scale, rather than letting the tests about fitting
 type quietly skip. The deployment shell scripts are checked with `shellcheck` in
 the same run, since a mistake in those surfaces at the range rather than here.
 
-Pushing a `v*` tag builds the SD card image with `image/build.sh`, checks it
-with `image/check.sh`, and attaches it to the release.
+Pushing a `v*` tag builds the SD card image with `image/build.sh`, checks its
+files with `image/check.sh`, boots it with `image/boot-test.sh` to see the
+hotspot fallback start, and attaches it to the release.
 
 ## Licence
 

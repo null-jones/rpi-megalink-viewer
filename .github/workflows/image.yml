@@ -44,6 +44,15 @@ jobs:
       - name: Check the image
         run: sudo image/check.sh dist/image/*.img.xz
 
+      # Booted, with no network, to see the hotspot fallback start and count
+      # down. Its files once all passed the check above while systemd dropped
+      # it from every boot, which only booting shows.
+      - name: Boot the image
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends systemd-container
+          sudo image/boot-test.sh dist/image/*.img.xz
+
       - uses: actions/upload-artifact@v4
         with:
           name: megalink-display-image
