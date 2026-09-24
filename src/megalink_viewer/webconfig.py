@@ -414,9 +414,20 @@ def setup_page(
         )
         return SETUP_PAGE.replace("{{BODY}}", body)
     if url is None:
+        remaining = network.seconds_to_hotspot(status)
+
+        def countdown(seconds: int) -> str:
+            # Counted down by the page's script between reloads, which are only
+            # every few seconds.
+            return (
+                f'<span data-countdown="{remaining or 0:.1f}">'
+                f"{html.escape(network.seconds_phrase(seconds))}</span>"
+            )
+
         body = (
             "<h2>Waiting for a network…</h2>"
-            "<p>This display is not on Wi-Fi yet. Check the network name and password.</p>"
+            f"<p>{network.waiting_note(status, phrase=countdown)}</p>"
+            f"<p class=muted>{html.escape(network.CABLE_NOTE)}</p>" + COUNTDOWN_SCRIPT
         )
     else:
         local = reach.local_url()
@@ -429,6 +440,22 @@ def setup_page(
             f"This display is called {name}.</p></div></div>"
         )
     return SETUP_PAGE.replace("{{BODY}}", body)
+
+
+#: Counts the hotspot countdown down second by second, and reloads the page at
+#: the end of it to say what happened instead.
+COUNTDOWN_SCRIPT = """<script>
+(function () {
+  var el = document.querySelector("[data-countdown]");
+  if (!el) return;
+  var end = Date.now() + parseFloat(el.dataset.countdown) * 1000;
+  setInterval(function () {
+    var left = Math.ceil((end - Date.now()) / 1000);
+    if (left < 1) { location.reload(); return; }
+    el.textContent = left + (left === 1 ? " second" : " seconds");
+  }, 250);
+})();
+</script>"""
 
 
 SETUP_PAGE = """<!doctype html>

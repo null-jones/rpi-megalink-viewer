@@ -199,6 +199,21 @@ class TestHotspotOnTheConsole:
         assert "Megalink fp-09" in text and "7kqm-xw4p-9ht2" in text
         assert "http://10.42.0.1:8080/" in text
 
+    def test_with_no_network_it_counts_down_to_the_hotspot(self):
+        import time
+
+        from megalink_viewer.address import Reach
+        from megalink_viewer.render import render_setup
+
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": time.time()}
+        text = " ".join(
+            line.strip()
+            for line in render_setup(Reach("fp-09", [], 8080), 60, 40, network_status=status)
+        )
+        assert "Waiting for a network" in text
+        assert "in 20 seconds it will start its own Wi-Fi" in text
+        assert "network cable" in text
+
     def test_the_code_is_for_joining_the_network(self):
         from megalink_viewer import qr
         from megalink_viewer.render import render_setup

@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import secrets
 import subprocess
@@ -571,17 +572,96 @@ def read_status(path: Path = STATUS_PATH) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+#: A status file older than this is from a service that has stopped. Longer
+#: than the longest the service goes without writing one, which is while it
+#: scans for networks and then starts the hotspot: up to a minute and a half.
+STALE_AFTER = 120.0
+
+
+def seconds_to_hotspot(status: dict[str, Any] | None, now: float | None = None) -> float | None:
+    """How long until the display starts its own Wi-Fi, as read from its status.
+
+    Counted from when the file was written, so a screen that reads it every few
+    seconds can still count down second by second. ``None`` when nothing is
+    counting down, or when the file is too old to believe.
+    """
+    if not isinstance(status, dict):
+        return None
+    remaining = status.get("hotspot_in")
+    updated = status.get("updated")
+    if not isinstance(remaining, (int, float)) or not isinstance(updated, (int, float)):
+        return None
+    age = (time.time() if now is None else now) - updated
+    if age > STALE_AFTER:
+        return None
+    # A clock that has gone backwards since the file was written -- set by
+    # hand, say -- makes no file younger than new.
+    return max(0.0, float(remaining) - max(0.0, age))
+
+
+#: Said on every screen that is waiting for a network, below the countdown.
+CABLE_NOTE = "A network cable works too: plug one in and it will use that."
+
+
+def seconds_phrase(seconds: int) -> str:
+    return f"{seconds} second" if seconds == 1 else f"{seconds} seconds"
+
+
+def waiting_note(
+    status: dict[str, Any] | None,
+    now: float | None = None,
+    phrase: Callable[[int], str] = seconds_phrase,
+) -> str:
+    """What a display waiting for a network says about what happens next.
+
+    The same words on the window, the console and the browser page. The point
+    is that someone looking at a screen that has said "waiting" for a while can
+    see that the display is alive and about to do something about it. The
+    browser page passes its own ``phrase``, to mark the number for its script
+    to count down.
+    """
+    remaining = seconds_to_hotspot(status, now)
+    if remaining is None:
+        return "This display is not on a network yet."
+    if remaining >= 1:
+        return (
+            f"If it finds none, in {phrase(math.ceil(remaining))} it will start its own "
+            "Wi-Fi so you can set it up from a phone."
+        )
+    return "Starting its own Wi-Fi so you can set it up from a phone…"
+
+
+def hotspot_in(memory: Memory, now: float) -> float | None:
+    """Seconds until the hotspot is started, if it is being counted down to.
+
+    While waiting for a first network after boot, and during a look round for a
+    known one from the hotspot. Otherwise nothing is counting down: on a
+    network there is no hotspot to come, and joining one has its own message.
+    """
+    windows = {"waiting": BOOT_GRACE, "retrying": RETRY_WINDOW}
+    if memory.mode not in windows:
+        return None
+    return max(0.0, windows[memory.mode] - (now - memory.since))
+
+
 def status(
     memory: Memory,
     secret: dict[str, str],
     networks: list[dict[str, Any]],
     country: str = "",
+    now: float | None = None,
 ) -> dict[str, Any]:
     """The status file's contents. The hotspot password is on the screen anyway;
-    the password of a network being joined never goes in here."""
+    the password of a network being joined never goes in here.
+
+    ``now`` is on the same clock as ``memory``; without it there is no
+    countdown to the hotspot.
+    """
     on_hotspot = memory.mode == "hotspot"
+    countdown = hotspot_in(memory, now) if now is not None else None
     return {
         "mode": memory.mode,
+        "hotspot_in": None if countdown is None else round(countdown, 1),
         "hotspot": (
             {"ssid": secret["ssid"], "password": secret["password"], "address": HOTSPOT_ADDRESS}
             if on_hotspot
@@ -666,7 +746,7 @@ def run(
             country = nm.country()
         write_durably(
             status_path,
-            json.dumps(status(memory, secret, networks, country)).encode("utf-8"),
+            json.dumps(status(memory, secret, networks, country, now=clock())).encode("utf-8"),
             prefix=".network-",
         )
         os.chmod(status_path, 0o644)

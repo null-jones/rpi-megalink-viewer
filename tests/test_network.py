@@ -350,6 +350,76 @@ class TestStatus:
     def test_reading_a_missing_status_is_none(self, tmp_path):
         assert network.read_status(tmp_path / "missing.json") is None
 
+    def test_while_waiting_it_counts_down_to_the_hotspot(self):
+        memory = Memory(mode="waiting", since=100.0)
+        out = network.status(memory, self.SECRET, [], now=110.0)
+        assert out["hotspot_in"] == network.BOOT_GRACE - 10
+
+    def test_a_look_round_from_the_hotspot_counts_down_too(self):
+        memory = Memory(mode="retrying", since=100.0)
+        out = network.status(memory, self.SECRET, [], now=105.0)
+        assert out["hotspot_in"] == network.RETRY_WINDOW - 5
+
+    def test_the_countdown_never_goes_below_nothing(self):
+        # The service is late starting the hotspot while it scans.
+        memory = Memory(mode="waiting", since=0.0)
+        assert network.status(memory, self.SECRET, [], now=500.0)["hotspot_in"] == 0
+
+    def test_nothing_counts_down_on_a_network_or_on_the_hotspot(self):
+        for mode in ("client", "hotspot", "joining"):
+            out = network.status(Memory(mode=mode), self.SECRET, [], now=10.0)
+            assert out["hotspot_in"] is None, mode
+
+
+class TestTheCountdownOnTheScreen:
+    """What the screens make of the countdown in the status file."""
+
+    def test_it_counts_on_from_when_the_file_was_written(self):
+        # Read every few seconds and shown every second, so it has to.
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": 1000.0}
+        assert network.seconds_to_hotspot(status, now=1005.0) == 15.0
+
+    def test_it_stops_at_nothing(self):
+        status = {"mode": "waiting", "hotspot_in": 3.0, "updated": 1000.0}
+        assert network.seconds_to_hotspot(status, now=1010.0) == 0.0
+
+    def test_a_file_from_a_service_that_stopped_is_not_believed(self):
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": 1000.0}
+        assert network.seconds_to_hotspot(status, now=1000.0 + network.STALE_AFTER + 1) is None
+
+    def test_a_clock_set_back_makes_the_file_no_younger(self):
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": 1000.0}
+        assert network.seconds_to_hotspot(status, now=900.0) == 20.0
+
+    def test_no_file_or_no_countdown_is_none(self):
+        assert network.seconds_to_hotspot(None) is None
+        assert network.seconds_to_hotspot({"mode": "client", "updated": 1.0}) is None
+        assert network.seconds_to_hotspot({"hotspot_in": None, "updated": 1.0}) is None
+
+    def test_it_says_when_the_hotspot_will_start(self):
+        status = {"hotspot_in": 23.4, "updated": 1000.0}
+        note = network.waiting_note(status, now=1000.0)
+        assert "in 24 seconds it will start its own Wi-Fi" in note
+
+    def test_one_second_is_one_second(self):
+        note = network.waiting_note({"hotspot_in": 1.0, "updated": 1000.0}, now=1000.0)
+        assert "in 1 second " in note
+
+    def test_at_the_end_it_says_it_is_starting(self):
+        # The look round for networks first can take a while; the screen
+        # should not sit at "0 seconds" through it.
+        note = network.waiting_note({"hotspot_in": 0.0, "updated": 1000.0}, now=1000.0)
+        assert note.startswith("Starting its own Wi-Fi")
+
+    def test_with_nothing_counting_down_it_only_says_it_is_waiting(self):
+        assert network.waiting_note(None) == "This display is not on a network yet."
+
+    def test_the_number_can_be_marked_up(self):
+        note = network.waiting_note(
+            {"hotspot_in": 5.0, "updated": 1000.0}, now=1000.0, phrase=lambda n: f"<{n}>"
+        )
+        assert "in <5> it will" in note
+
 
 class FakeNmcli:
     """Answers nmcli and iw as a Pi would, and records what it was asked."""
@@ -450,6 +520,14 @@ class TestTheService:
         assert out["mode"] == "hotspot"
         assert out["hotspot"]["ssid"] == "Megalink fp-09"
         assert out["hotspot"]["address"] == "10.42.0.1"
+
+    def test_before_the_hotspot_the_status_counts_down_to_it(self, tmp_path):
+        # The pretend clock moves five seconds a reading: started at 0, looked
+        # at 5, and wrote the file at 10 -- read again, since starting the
+        # hotspot can take a while between the two. So 20 to go.
+        out, _said = self.run(tmp_path, FakeNmcli(), ticks=1)
+        assert out["mode"] == "waiting"
+        assert out["hotspot_in"] == network.BOOT_GRACE - 10
 
     def test_the_hotspot_file_is_written_before_it_is_started(self, tmp_path):
         self.run(tmp_path, FakeNmcli(), ticks=10)

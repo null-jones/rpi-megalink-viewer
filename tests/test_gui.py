@@ -11,6 +11,7 @@ import gc
 import math
 import subprocess
 import sys
+import time
 from typing import Any, ClassVar
 
 import pytest
@@ -1700,6 +1701,34 @@ class TestSetupScreen:
         try:
             assert "Waiting for a network" in win._setup_lead.cget("text")
             assert win._setup_code.winfo_manager() == ""
+        finally:
+            win.close()
+
+    def test_no_network_counts_down_to_the_hotspot(self, gui, root, v2_state):
+        # So a screen that has said "waiting" for a while is plainly alive.
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": time.time()}
+        win = gui.LaneWindow(
+            self.unconfigured(v2_state),
+            "9",
+            interval_ms=10_000,
+            find_reach=lambda port: self.reach(url_address=None, port=port),
+            read_network=lambda: status,
+        )
+        try:
+            win.root.withdraw()
+            win.refresh(poll=False)
+            note = win._setup_note.cget("text")
+            assert "in 20 seconds it will start its own Wi-Fi" in note
+            assert "network cable" in note
+        finally:
+            win.close()
+
+    def test_no_network_and_no_fallback_still_mentions_a_cable(self, gui, root, v2_state):
+        win = self.window(gui, self.unconfigured(v2_state), reach=self.reach(url_address=None))
+        try:
+            note = win._setup_note.cget("text")
+            assert "not on a network yet" in note and "network cable" in note
+            assert "Check the network name" not in note
         finally:
             win.close()
 

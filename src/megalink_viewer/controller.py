@@ -352,7 +352,7 @@ def run_terminal(
 
     if interactive:
         write(HIDE_CURSOR + CLEAR_SCREEN)
-    reach, reach_at, spot = None, float("-inf"), None
+    reach, reach_at, spot, status = None, float("-inf"), None, {}
     try:
         while stop is None or not stop():
             config = controller.config
@@ -365,7 +365,15 @@ def run_terminal(
                 if not config.configured or spot:
                     reach = address.find(config.web.port if config.web.enabled else 0)
             if not config.configured or spot:
-                lines = render_setup(reach, width, height, config.name, interactive, hotspot=spot)
+                lines = render_setup(
+                    reach,
+                    width,
+                    height,
+                    config.name,
+                    interactive,
+                    hotspot=spot,
+                    network_status=status,
+                )
                 write(compose(lines, height, interactive))
                 time.sleep(interval)
                 continue

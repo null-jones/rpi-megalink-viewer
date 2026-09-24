@@ -1570,8 +1570,10 @@ class LaneWindow:
             self._setup_lead.configure(text="Waiting for a network…")
             self._setup_url.configure(text="")
             self._setup_local.configure(text="")
+            # Counted down every redraw, from a status read every few seconds:
+            # a screen that only ever says "waiting" looks like a dead one.
             self._setup_note.configure(
-                text="This display is not on Wi-Fi yet.\nCheck the network name and password."
+                text=f"{network.waiting_note(self._network)}\n\n{network.CABLE_NOTE}"
             )
             self._draw_code("first", self._setup_code, None, SETUP_CODE_SHARE)
         else:

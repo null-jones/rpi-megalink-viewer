@@ -624,6 +624,43 @@ class TestSetupPage:
         assert "Waiting for a network" in body
         assert "<svg" not in body
 
+    def test_with_no_network_it_counts_down_to_the_hotspot(self, config_path, fake_client):
+        import time
+
+        from megalink_viewer.address import Reach
+
+        config = Config()
+        config.web.port = 0
+        config.web.bind = "127.0.0.1"
+        config.beacon.enabled = False
+        save(config, config_path)
+        controller = Controller(path=config_path, client=fake_client)
+        controller.reload()
+        status = {"mode": "waiting", "hotspot_in": 20.0, "updated": time.time()}
+        server = ConfigServer(
+            controller,
+            find_reach=lambda port: Reach("fp-09", [], port),
+            read_network=lambda: status,
+        ).start()
+        try:
+            body = self.page(server)[2]
+        finally:
+            server.stop()
+            controller.stop()
+        # The number is marked for the page's script to count down.
+        assert 'data-countdown="20.0">20 seconds</span> it will start its own Wi-Fi' in body
+        assert "network cable" in body
+        assert "location.reload()" in body
+
+    def test_with_nothing_counting_down_there_is_no_countdown(self, unconfigured):
+        from megalink_viewer.address import Reach
+
+        server, reach = unconfigured
+        reach["value"] = Reach("fp-09", [], 8080)
+        body = self.page(server)[2]
+        assert "data-countdown=" not in body
+        assert "network cable" in body
+
     def test_names_are_escaped(self, unconfigured, config_path):
         # The display name is set by whoever configures it, and goes into HTML.
         server, _reach = unconfigured

@@ -10,6 +10,7 @@ glance rather than studied.
 from __future__ import annotations
 
 import re
+import textwrap
 import time
 from typing import Any
 
@@ -319,26 +320,26 @@ def render_setup(
     name: str = "",
     interactive: bool = False,
     hotspot: dict[str, Any] | None = None,
+    network_status: dict[str, Any] | None = None,
 ) -> list[str]:
     """What a console display with nothing configured shows instead.
 
     The address, and on a real terminal a QR code of it underneath when there
     is room -- drawn with background colours, which work on the Linux console
     whatever font it has. Not in a log, where the colour codes would be noise.
+    With no address yet, what the hotspot fallback is about to do, from
+    ``network_status``.
     """
-    from . import qr
+    from . import network, qr
 
     if hotspot:
         return _render_hotspot(hotspot, reach, width, height, interactive)
     url = reach.url() if reach is not None else None
     lines = ["", "  SET UP THIS DISPLAY", ""]
     if url is None:
-        lines += [
-            "  Waiting for a network…",
-            "",
-            "  This display is not on Wi-Fi yet.",
-            "  Check the network name and password.",
-        ]
+        lines += ["  Waiting for a network…", ""]
+        for note in (network.waiting_note(network_status), "", network.CABLE_NOTE):
+            lines += ["  " + part for part in textwrap.wrap(note, max(20, width - 4))] or [""]
         return [_truncate(line, width) for line in lines]
     lines += [f"  On a phone or laptop on the same network, open  {url}"]
     local = reach.local_url()

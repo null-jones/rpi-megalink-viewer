@@ -736,8 +736,15 @@ service, watches for that:
 | **every 5 min on its own Wi-Fi** | it steps aside for 30 s to look for a network it knows — *only if no phone is connected*, so nobody is cut off halfway through |
 | **a network chosen on the settings page** | it tries it for 45 s; if that fails, its own Wi-Fi comes back and the page says why |
 
-The screen shows two codes: one a phone's camera joins the network from, and one
-that opens the settings page on it (`http://10.42.0.1:8080/`). Phones usually say
+Until then the screen counts down: "If it finds none, in 24 seconds it will
+start its own Wi-Fi so you can set it up from a phone." A screen that only said
+"waiting" looked dead to anyone who had waited a minute. It also says a network
+cable works, since plugging one in is the other way out. The count comes from the
+service, which writes how long is left into its status file every few seconds;
+the screen counts down from that between reads.
+
+Then the screen shows two codes: one a phone's camera joins the network from, and
+one that opens the settings page on it (`http://10.42.0.1:8080/`). Phones usually say
 the network has no internet; staying connected is fine.
 
 The hotspot's password is made once, from letters that cannot be mistaken for
