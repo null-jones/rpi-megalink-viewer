@@ -256,6 +256,22 @@ if [ ! -s "$CONFIG" ]; then
 fi
 echo "wrote $CONFIG"
 
+# --- saying what this is, on the console ----------------------------------
+# The text console is what is on the screen while the display boots and
+# whenever it is not drawing, and what anyone who logs in sees first. It said
+# nothing but a login prompt. Now it shows the logo, where the settings are,
+# and where the project lives. In /etc/issue.d beside the system's own text
+# rather than over it, and for SSH in update-motd.d, which Debian runs at login.
+install -d /etc/issue.d /etc/update-motd.d
+"$PY" -m megalink_viewer banner --issue --config "$CONFIG" > /etc/issue.d/megalink.issue \
+    || rm -f /etc/issue.d/megalink.issue
+cat > /etc/update-motd.d/20-megalink <<MOTD
+#!/bin/sh
+# Written by megalink's installer: say what this machine is, at login.
+"$PY" -m megalink_viewer banner --config "$CONFIG" 2>/dev/null || true
+MOTD
+chmod 0755 /etc/update-motd.d/20-megalink
+
 # --- the driver configuration X needs on a Pi ------------------------------
 if [ "$EFFECTIVE_MODE" = gui ]; then
     # The package writes the file from a boot-time script, so on a machine that

@@ -442,7 +442,7 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             print(f"megalink: {outputs.arrange()}", file=sys.stderr)
 
         if startup_mode == "browser":
-            from .browser import BrowserDisplay, find_browser, run_panes
+            from .browser import BrowserDisplay, find_browser, low_memory_note, run_panes
 
             def note(message: str) -> None:
                 print(f"megalink: {message}", file=sys.stderr)
@@ -459,6 +459,9 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
                 f"using {browser} on DISPLAY={os.environ.get('DISPLAY', '(unset)')}",
                 file=sys.stderr,
             )
+            short = low_memory_note()
+            if short:
+                note(short)
 
             def pane(**extra: Any) -> BrowserDisplay:
                 return BrowserDisplay(
@@ -475,11 +478,12 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
                 # Separate profiles: Chromium puts a second window into the
                 # first one's session otherwise, and it lands on one screen.
                 panes = [
-                    pane(screen=pair[0], profile="/tmp/megalink-browser-1"),
+                    pane(screen=pair[0], profile="/tmp/megalink-browser-1", label="screen 1"),
                     pane(
                         screen=pair[1],
                         profile="/tmp/megalink-browser-2",
                         lane_source=lambda: controller.config.display.lane2,
+                        label="screen 2",
                     ),
                 ]
             run_panes(panes, should_stop)
@@ -581,6 +585,37 @@ def cmd_netwatch(args: argparse.Namespace, client: MegalinkClient) -> int:
         request_path=path.parent / "wifi-request.json",
         secret_path=path.parent / "hotspot.json",
     )
+    return 0
+
+
+def cmd_banner(args: argparse.Namespace, client: MegalinkClient) -> int:
+    """Say what is running, for a text console: an SSH login, or the login screen."""
+    from . import address, banner
+    from .config import default_path, load
+
+    path = Path(args.config) if args.config else default_path()
+    try:
+        config = load(path)
+    except ConfigError:
+        config = None
+    port = config.web.port if config is not None and config.web.enabled else 0
+    if args.issue:
+        sys.stdout.write(banner.issue(port or 8080))
+        return 0
+    reach = address.find(port) if port else None
+    url = reach.url() if reach is not None else None
+    width = shutil.get_terminal_size((100, 24)).columns
+    name = config.name if config is not None else ""
+    for line in banner.banner(width, address=url, color=not args.plain, name=name):
+        print(line)
+    return 0
+
+
+def cmd_identify_overlay(args: argparse.Namespace, client: MegalinkClient) -> int:
+    """Flash a display's name over its browser for a few seconds."""
+    from .overlay import show
+
+    show(args.text, args.seconds, args.geometry)
     return 0
 
 
@@ -757,6 +792,25 @@ def build_parser() -> argparse.ArgumentParser:
     netwatch.add_argument("--config", help="path to the display's configuration file")
     netwatch.add_argument("--interface", default="wlan0", help="the Wi-Fi interface")
     netwatch.set_defaults(func=cmd_netwatch)
+
+    shown = sub.add_parser(
+        "banner", help="say what is running, for a console login (logo, address, project)"
+    )
+    shown.add_argument("--config", help="path to the display's configuration file")
+    shown.add_argument(
+        "--issue", action="store_true", help="for /etc/issue.d: the console's login screen"
+    )
+    shown.add_argument("--plain", action="store_true", help="no colour and no logo")
+    shown.set_defaults(func=cmd_banner)
+
+    overlay = sub.add_parser(
+        "identify-overlay",
+        help="flash a display's name over its browser (used by browser mode)",
+    )
+    overlay.add_argument("--text", required=True)
+    overlay.add_argument("--seconds", type=float, default=8.0)
+    overlay.add_argument("--geometry", help="the screen, as WIDTHxHEIGHT+X+Y")
+    overlay.set_defaults(func=cmd_identify_overlay)
 
     fleet = sub.add_parser(
         "fleet", parents=[common], help="dashboard listing every display on this network"

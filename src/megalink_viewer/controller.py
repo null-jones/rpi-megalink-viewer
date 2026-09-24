@@ -258,6 +258,15 @@ class Controller:
     def identifying(self) -> bool:
         return time.monotonic() < self._identify_until
 
+    @property
+    def identify_until(self) -> float:
+        """When the current request to identify ends, on the monotonic clock.
+
+        Changes with every request, so a browser pane can tell a new one from
+        the one it is already showing.
+        """
+        return self._identify_until
+
     # -- following the file ------------------------------------------------
 
     def _mtime(self) -> tuple[int, int] | None:

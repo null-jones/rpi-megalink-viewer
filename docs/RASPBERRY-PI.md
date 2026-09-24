@@ -562,7 +562,10 @@ Every display serves a page at `http://<display>:8080/`. Open it on a phone at
 the firing point and you get what it is showing right now — shooter, total,
 shots, whether the feed is live — and dropdowns to change the club, range and
 firing point, populated from the live host list. There is an **Identify** button
-that makes that screen flash its name, for when twenty of them look alike.
+that makes that screen flash its name, for when twenty of them look alike. In
+browser mode the screen is Megalink's own page, so the name is flashed in a small
+window of the display's own over it, for as long as it is identifying itself;
+the page underneath is left loaded rather than reloaded.
 
 Its API is small enough to script against:
 
@@ -647,6 +650,16 @@ cross-site after asking the server first — and these servers never say yes. Th
 closes the forged-request route; it is not a substitute for a token. A page that
 uses DNS rebinding can still reach an open display, which is the other reason to
 set one.
+
+### Chromium on a Pi Zero 2 W
+
+Debian's `chromium` is a wrapper script around the browser. On a machine with
+512MB or less, which a Zero 2 W is, it stops before starting Chromium and asks
+in a dialog box whether to carry on. A display has nobody to answer that, so the
+dialog sat on the screen and the page never came. The display now passes the
+wrapper's own `--no-memcheck`, and says in the journal that the machine is short
+of memory instead. Chromium does run on a Zero 2 W, but slowly; window mode
+shows the same scores in far less memory, and suits a Zero better.
 
 ### What it costs
 

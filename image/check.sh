@@ -64,6 +64,8 @@ check "the display's user exists" grep -q '^megalink:' "$R/etc/passwd"
 check "the renaming script is installed" test -x "$R/opt/megalink/megalink-firstboot"
 
 # Names itself: the first boot renames "megalink" to megalink-XXXX.
+check "the console says what is running" test -s "$R/etc/issue.d/megalink.issue"
+check "and so does an SSH login" test -x "$R/etc/update-motd.d/20-megalink"
 check "the hostname is megalink until first boot" \
     test "$(cat "$R/etc/hostname")" = megalink
 

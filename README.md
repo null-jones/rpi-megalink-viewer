@@ -144,6 +144,13 @@ megalink config --mode browser
 Changing the mode restarts the display by itself — including remotely, which is
 how you rescue a screen whose X server has given up.
 
+`browser` runs on a Pi Zero 2 W, but slowly: 512MB is tight for Chromium, and the
+journal says so. `gui` shows the same scores in far less.
+
+**The console says what is running.** On the screen while a display boots, and
+for anyone who logs in over SSH, the text console shows the logo, the display's
+name and settings address, and a link to this project.
+
 ## Every display manages the range
 
 There is no central server to run. Each display hears the others over UDP

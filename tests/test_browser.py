@@ -362,3 +362,105 @@ class TestOnTheHotspot:
         assert shown.wanted_url().endswith("/1-10/9")
         status["value"] = {"mode": "hotspot"}
         assert shown.wanted_url().endswith("/setup")
+
+
+class TestLowMemory:
+    """A Pi Zero 2 W has 512MB, which Debian's Chromium wrapper stops to ask about."""
+
+    def test_the_wrappers_question_is_never_asked(self):
+        # A dialog box nobody can answer, and Chromium not started until then.
+        assert "--no-memcheck" in browser.kiosk_command("/usr/bin/chromium", "http://x/")
+
+    def test_nor_on_one_screen_of_two(self):
+        from megalink_viewer.outputs import Screen
+
+        command = browser.kiosk_command(
+            "/usr/bin/chromium", "http://x/", screen=Screen("HDMI-2", 1280, 720, 1920, 0)
+        )
+        assert "--no-memcheck" in command
+
+    def test_a_small_machine_is_told_about(self):
+        note = browser.low_memory_note("MemTotal:         438024 kB\nMemFree: 1 kB\n")
+        assert "427MB" in note and "Window mode" in note
+
+    def test_a_big_one_is_not(self):
+        assert browser.low_memory_note("MemTotal:        3884212 kB\n") == ""
+
+    def test_nor_one_it_cannot_measure(self):
+        assert browser.low_memory_note("nothing useful\n") == ""
+
+
+class TestIdentifying:
+    """The page is Megalink's, so the name is flashed in a window over it."""
+
+    class Identifying(FakeController):
+        def __init__(self, config):
+            super().__init__(config)
+            self.identify_until = 0.0
+
+        def identify(self, seconds=8.0):
+            import time
+
+            self.identify_until = time.monotonic() + seconds
+
+    def pane(self, controller, **extra):
+        spawned = []
+        pane = browser.BrowserDisplay(
+            controller,
+            spawn=lambda cmd: (spawned.append(FakeProcess(cmd)), spawned[-1])[1],
+            browser="/usr/bin/chromium",
+            **extra,
+        )
+        return pane, spawned
+
+    def overlays(self, spawned):
+        return [p.command for p in spawned if "identify-overlay" in p.command]
+
+    def test_asked_to_identify_it_flashes_its_name_over_the_page(self):
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.beacon.name = "fp-09"
+        controller = self.Identifying(config)
+        pane, spawned = self.pane(controller)
+        pane.tick()
+        assert self.overlays(spawned) == []
+        controller.identify()
+        pane.tick()
+        (command,) = self.overlays(spawned)
+        assert command[command.index("--text") + 1] == "▶ fp-09"
+        assert "--geometry" not in command  # the whole screen
+
+    def test_once_per_request(self):
+        controller = self.Identifying(Config(host="stord-pk", range="1-10", lane="9"))
+        pane, spawned = self.pane(controller)
+        controller.identify()
+        pane.tick()
+        pane.tick()
+        pane.tick()
+        assert len(self.overlays(spawned)) == 1
+        controller.identify()
+        pane.tick()
+        assert len(self.overlays(spawned)) == 2
+
+    def test_on_two_screens_each_says_which_it_is_on_its_own(self):
+        from megalink_viewer.outputs import Screen
+
+        config = Config(host="stord-pk", range="1-10", lane="9")
+        config.beacon.name = "b3"
+        controller = self.Identifying(config)
+        pane, spawned = self.pane(
+            controller, screen=Screen("HDMI-2", 1280, 720, 1920, 0), label="screen 2"
+        )
+        controller.identify()
+        pane.tick()
+        (command,) = self.overlays(spawned)
+        assert command[command.index("--text") + 1] == "▶ b3 · screen 2"
+        assert command[command.index("--geometry") + 1] == "1280x720+1920+0"
+
+    def test_the_banner_is_centred_on_its_screen(self):
+        from megalink_viewer.overlay import banner, parse_geometry
+
+        assert parse_geometry("1280x720+1920+0") == (1280, 720, 1920, 0)
+        assert parse_geometry("nonsense") is None
+        w, h, x, y = banner((1280, 720, 1920, 0))
+        assert x - 1920 == 1280 - (x - 1920 + w)  # as much either side
+        assert y == (720 - h) // 2

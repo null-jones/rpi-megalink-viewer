@@ -95,6 +95,39 @@ def find_browser(candidates: Sequence[str] = BROWSERS) -> str | None:
     return None
 
 
+#: Below this much memory Chromium is slow, and liable to be stopped for want
+#: of more. A Pi Zero 2 W has 512MB.
+COMFORTABLE_MB = 1024
+
+
+def low_memory_note(meminfo: str | None = None) -> str:
+    """A line for the journal when the machine is short of memory for Chromium.
+
+    Empty when there is enough, or when it cannot tell. The browser is still
+    started: this is advice, and the screen showing something slowly beats it
+    showing nothing.
+    """
+    if meminfo is None:
+        try:
+            with open("/proc/meminfo", encoding="ascii") as handle:
+                meminfo = handle.read()
+        except OSError:
+            return ""
+    for line in meminfo.splitlines():
+        if line.startswith("MemTotal:"):
+            try:
+                megabytes = int(line.split()[1]) // 1024
+            except (IndexError, ValueError):
+                return ""
+            if megabytes >= COMFORTABLE_MB:
+                return ""
+            return (
+                f"this machine has {megabytes}MB of memory, which Chromium finds tight: "
+                "pages may be slow to appear. Window mode shows the same scores in far less"
+            )
+    return ""
+
+
 def kiosk_command(
     browser: str,
     url: str,
@@ -128,6 +161,11 @@ def kiosk_command(
         *(["--start-fullscreen"] if screen is not None else ["--kiosk"]),
         *placement,
         "--incognito",
+        # Debian's chromium wrapper asks, with a dialog box, whether to carry
+        # on when the machine has 512MB or less -- a Pi Zero 2 W. Nobody can
+        # answer it, and Chromium never starts until somebody does. The wrapper
+        # takes this option itself; a Chromium without the wrapper ignores it.
+        "--no-memcheck",
         "--noerrdialogs",
         "--disable-infobars",
         "--no-first-run",
@@ -180,6 +218,7 @@ class BrowserDisplay:
         lane_source: Callable[[], str] | None = None,
         profile: str = "/tmp/megalink-browser",
         read_network: Callable[[], Any] | None = None,
+        label: str = "",
     ) -> None:
         self._controller = controller
         self._should_stop = should_stop or (lambda: False)
@@ -197,6 +236,12 @@ class BrowserDisplay:
         #: profile of its own or it opens a tab in the first one instead.
         self._profile = profile
         self._read_network = read_network
+        #: "screen 1" or "screen 2" with two, said when identifying.
+        self.label = label
+        #: The name flashed over the page when the display identifies itself,
+        #: and which request it was for.
+        self._overlay: Any = None
+        self._identified_until = 0.0
 
     @staticmethod
     def _default_spawn(command: list[str]) -> Any:  # pragma: no cover - needs a browser
@@ -234,9 +279,37 @@ class BrowserDisplay:
         self._url = url
         self._started_at = time.monotonic()
 
+    def identify(self) -> None:
+        """Flash the display's name over the page, if it has just been asked to.
+
+        The page is Megalink's, which the display does not draw, so the name
+        goes in a window of its own on top -- one per screen, saying which.
+        """
+        until = float(getattr(self._controller, "identify_until", 0.0) or 0.0)
+        if until == self._identified_until:
+            return
+        self._identified_until = until
+        left = until - time.monotonic()
+        if left <= 0:
+            return
+        from . import overlay
+
+        # A second request while the first is showing starts it again.
+        self._end(self._overlay)
+        name = getattr(self._controller.config, "name", "") or "this display"
+        text = f"▶ {name}" + (f" · {self.label}" if self.label else "")
+        geometry = self._screen.geometry if self._screen is not None else None
+        self._overlay = self._spawn(overlay.command(text, left, geometry))
+
     def stop_browser(self) -> None:
+        self._end(self._overlay)
+        self._overlay = None
         process = self._process
         self._process = None
+        self._end(process)
+
+    @staticmethod
+    def _end(process: Any) -> None:
         if process is None:
             return
         for step in ("terminate", "kill"):
@@ -253,6 +326,7 @@ class BrowserDisplay:
 
     def tick(self) -> None:
         """One pass of the supervisor: reload on a change, restart on a death."""
+        self.identify()
         wanted = self.wanted_url()
         if wanted != self._url:
             self.start(wanted)

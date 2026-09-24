@@ -299,6 +299,13 @@ def frame(
     lines = render_lane(view, width=width, age=age, color=color)
     if extra:
         lines.append(extra)
+    if interactive and len(lines) < height:
+        # What is running, along the bottom, where it is in nobody's way.
+        from . import banner
+
+        lines += [""] * (height - 1 - len(lines)) + [
+            colorize(banner.footer(width), "dim", enabled=color)
+        ]
     return compose(lines, height, interactive)
 
 
@@ -311,6 +318,32 @@ def compose(lines: list[str], height: int, interactive: bool) -> str:
     lines += [""] * (height - len(lines))
     screen = "\n".join(lines)
     return HOME + screen.replace("\n", CLEAR_TO_EOL + "\n") + CLEAR_BELOW
+
+
+def branded(
+    lines: list[str],
+    width: int,
+    height: int,
+    interactive: bool,
+    address: str | None = None,
+    name: str = "",
+) -> list[str]:
+    """A console screen with what is running on it: the logo when it fits, or a
+    line along the bottom when it does not.
+
+    Only on a real console. In a log it would be colour codes and repetition,
+    and it never pushes off the screen what the screen is for.
+    """
+    from . import banner
+
+    if not interactive:
+        return lines
+    logo = banner.banner(width, address=address, name=name)
+    if len(logo) > 3 and len(lines) + len(logo) + 1 <= height:
+        return [*logo, "", *lines]
+    if len(lines) < height:
+        return [*lines, *[""] * (height - 1 - len(lines)), banner.footer(width)]
+    return lines
 
 
 def render_setup(
@@ -333,14 +366,22 @@ def render_setup(
     from . import network, qr
 
     if hotspot:
-        return _render_hotspot(hotspot, reach, width, height, interactive)
+        return branded(
+            _render_hotspot(hotspot, reach, width, height, interactive),
+            width,
+            height,
+            interactive,
+            name=name,
+        )
     url = reach.url() if reach is not None else None
     lines = ["", "  SET UP THIS DISPLAY", ""]
     if url is None:
         lines += ["  Waiting for a network…", ""]
         for note in (network.waiting_note(network_status), "", network.CABLE_NOTE):
             lines += ["  " + part for part in textwrap.wrap(note, max(20, width - 4))] or [""]
-        return [_truncate(line, width) for line in lines]
+        return branded(
+            [_truncate(line, width) for line in lines], width, height, interactive, name=name
+        )
     lines += [f"  On a phone or laptop on the same network, open  {url}"]
     local = reach.local_url()
     if local:
@@ -354,7 +395,7 @@ def render_setup(
         if len(lines) + 1 + len(code) <= height and columns + 2 <= width:
             margin = " " * max(2, (width - columns) // 2)
             lines += [""] + [margin + row for row in code]
-    return lines
+    return branded(lines, width, height, interactive, address=url, name=name)
 
 
 def _render_hotspot(
