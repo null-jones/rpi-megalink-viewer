@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -158,6 +159,68 @@ def _run_ip() -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return result.stdout if result.returncode == 0 else ""
+
+
+def summary(reach: Any, wifi: str = "") -> str:
+    """One line on how this display is on the network, for a corner of its screen.
+
+    "megalink-a199 · 192.168.1.23 on Wi-Fi RangeNet · settings http://…" --
+    everything someone setting up a range wants to read off a screen without
+    walking round to find a laptop.
+    """
+    url = reach.url() if reach is not None else None
+    if not url:
+        return ""
+    name = next((n for n, a in reach.addresses if a == reach.address), "")
+    if name.startswith(("eth", "en")):
+        how = " on a network cable"
+    elif name.startswith(("wlan", "wl")):
+        how = f" on Wi-Fi {wifi}" if wifi else " on Wi-Fi"
+    else:
+        how = ""
+    parts = [reach.hostname, f"{reach.address}{how}", f"settings {url}"]
+    return " · ".join(part for part in parts if part)
+
+
+class FirstAddress:
+    """When to show the network details: for a few seconds once there is an address.
+
+    From when the display first has one, rather than from when it started: a
+    Pi that takes twenty seconds to join its Wi-Fi would otherwise spend its
+    ten seconds saying it had no network, and then say nothing. Given up if no
+    address comes at all -- the display then has other things to say about
+    that -- and never shown again once shown.
+    """
+
+    def __init__(
+        self,
+        seconds: float = 10.0,
+        within: float = 180.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.seconds = seconds
+        self.within = within
+        self._clock = clock
+        self._started = clock()
+        self._until: float | None = None
+        self.done = False
+
+    def text(self, reach: Any, wifi: str = "") -> str:
+        """The line to show now, or empty."""
+        if self.done:
+            return ""
+        now = self._clock()
+        line = summary(reach, wifi)
+        if self._until is None:
+            if not line:
+                if now - self._started > self.within:
+                    self.done = True
+                return ""
+            self._until = now + self.seconds
+        if now >= self._until:
+            self.done = True
+            return ""
+        return line
 
 
 def describe(reach: Any) -> str:

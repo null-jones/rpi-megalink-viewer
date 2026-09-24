@@ -463,12 +463,15 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             if short:
                 note(short)
 
+            from . import address
+
             def pane(**extra: Any) -> BrowserDisplay:
                 return BrowserDisplay(
                     controller,
                     should_stop=should_stop,
                     browser=browser,
                     report=note,
+                    find_reach=address.find,
                     **extra,
                 )
 
@@ -615,7 +618,7 @@ def cmd_identify_overlay(args: argparse.Namespace, client: MegalinkClient) -> in
     """Flash a display's name over its browser for a few seconds."""
     from .overlay import show
 
-    show(args.text, args.seconds, args.geometry)
+    show(args.text, args.seconds, args.geometry, corner=args.corner)
     return 0
 
 
@@ -811,6 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
     overlay.add_argument("--text", required=True)
     overlay.add_argument("--seconds", type=float, default=8.0)
     overlay.add_argument("--geometry", help="the screen, as WIDTHxHEIGHT+X+Y")
+    overlay.add_argument("--corner", action="store_true", help="a small note in the corner")
     overlay.set_defaults(func=cmd_identify_overlay)
 
     fleet = sub.add_parser(

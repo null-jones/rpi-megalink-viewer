@@ -367,6 +367,9 @@ def run_terminal(
     if interactive:
         write(HIDE_CURSOR + CLEAR_SCREEN)
     reach, reach_at, spot, status = None, float("-inf"), None, {}
+    # The network details, on a line of their own, for the first seconds after
+    # the display has an address.
+    first = address.FirstAddress()
     try:
         while stop is None or not stop():
             config = controller.config
@@ -376,7 +379,7 @@ def run_terminal(
                 reach_at = time.monotonic()
                 status = network.read_status() or {}
                 spot = status.get("hotspot") if status.get("mode") == "hotspot" else None
-                if not config.configured or spot:
+                if not config.configured or spot or not first.done:
                     reach = address.find(config.web.port if config.web.enabled else 0)
             if not config.configured or spot:
                 lines = render_setup(
@@ -394,6 +397,9 @@ def run_terminal(
             note = controller.error or (
                 "connecting to Megalink Live…" if controller.connecting else ""
             )
+            network_line = first.text(reach, str(status.get("wifi") or ""))
+            if network_line:
+                note = f"{note}   {network_line}" if note else network_line
             write(
                 frame(
                     controller.lane_view(),

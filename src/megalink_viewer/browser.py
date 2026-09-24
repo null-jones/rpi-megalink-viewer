@@ -219,6 +219,7 @@ class BrowserDisplay:
         profile: str = "/tmp/megalink-browser",
         read_network: Callable[[], Any] | None = None,
         label: str = "",
+        find_reach: Callable[[int], Any] | None = None,
     ) -> None:
         self._controller = controller
         self._should_stop = should_stop or (lambda: False)
@@ -242,6 +243,15 @@ class BrowserDisplay:
         #: and which request it was for.
         self._overlay: Any = None
         self._identified_until = 0.0
+        #: The network details, in a corner once, when there is an address --
+        #: if the display is given a way to find its address.
+        from .address import FirstAddress
+
+        self._find_reach = find_reach
+        self._first_address = FirstAddress()
+        self._note: Any = None
+        self._noted = False
+        self._reach_at = float("-inf")
 
     @staticmethod
     def _default_spawn(command: list[str]) -> Any:  # pragma: no cover - needs a browser
@@ -301,7 +311,38 @@ class BrowserDisplay:
         geometry = self._screen.geometry if self._screen is not None else None
         self._overlay = self._spawn(overlay.command(text, left, geometry))
 
+    def network_note(self) -> None:
+        """Put the network details in a corner, once, when there is an address.
+
+        Not over the set-up page, nor on the display's own Wi-Fi: both say how
+        to reach the display already, and in full.
+        """
+        if self._find_reach is None or self._noted or self._first_address.done:
+            return
+        now = time.monotonic()
+        if now - self._reach_at < 5.0:
+            return
+        self._reach_at = now
+        config = self._controller.config
+        status = self._network_status() or {}
+        if not getattr(config, "configured", True) or status.get("mode") == "hotspot":
+            return
+        from . import overlay
+
+        port = int(getattr(config.web, "port", 0) or 0)
+        reach = self._find_reach(port) if port else None
+        line = self._first_address.text(reach, str(status.get("wifi") or ""))
+        if not line:
+            return
+        self._noted = True
+        geometry = self._screen.geometry if self._screen is not None else None
+        self._note = self._spawn(
+            overlay.command(line, self._first_address.seconds, geometry, corner=True)
+        )
+
     def stop_browser(self) -> None:
+        self._end(self._note)
+        self._note = None
         self._end(self._overlay)
         self._overlay = None
         process = self._process
@@ -327,6 +368,7 @@ class BrowserDisplay:
     def tick(self) -> None:
         """One pass of the supervisor: reload on a change, restart on a death."""
         self.identify()
+        self.network_note()
         wanted = self.wanted_url()
         if wanted != self._url:
             self.start(wanted)

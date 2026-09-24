@@ -683,6 +683,7 @@ def status(
     networks: list[dict[str, Any]],
     country: str = "",
     now: float | None = None,
+    wifi: str = "",
 ) -> dict[str, Any]:
     """The status file's contents. The hotspot password is on the screen anyway;
     the password of a network being joined never goes in here.
@@ -704,6 +705,8 @@ def status(
         "error": memory.error,
         "networks": networks,
         "country": country,
+        # The network the Wi-Fi is on, for the display to say which.
+        "wifi": wifi if memory.mode == "client" else "",
         "updated": time.time(),
     }
 
@@ -785,7 +788,9 @@ def run(
             country = nm.country()
         write_durably(
             status_path,
-            json.dumps(status(memory, secret, networks, country, now=clock())).encode("utf-8"),
+            json.dumps(
+                status(memory, secret, networks, country, now=clock(), wifi=seen.wifi_ssid)
+            ).encode("utf-8"),
             prefix=".network-",
         )
         os.chmod(status_path, 0o644)

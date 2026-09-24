@@ -556,6 +556,15 @@ JSON rather than TOML because the file is *written* by software as well as read,
 and JSON is the only human-legible format the standard library can do both with
 on every Python this supports.
 
+### Where a display is, at startup
+
+For its first ten seconds on the network, a display puts its name, its address,
+how it is connected (the Wi-Fi's name, or a cable) and its settings address in
+a corner of the screen: a small label in window mode, a window of its own over
+the page in browser mode, a line on the console. The ten seconds start when it
+first has an address, not when it starts, since joining Wi-Fi can take a while.
+It is not shown over the set-up screen, which says all of it already.
+
 ### The display's own web page
 
 Every display serves a page at `http://<display>:8080/`. Open it on a phone at

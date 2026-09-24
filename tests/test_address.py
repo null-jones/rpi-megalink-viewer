@@ -86,3 +86,53 @@ class TestFinding:
         # Not asserting what: only that it runs, and never answers loopback.
         found = address.outbound_address()
         assert found is None or not found.startswith("127.")
+
+
+class TestTheStartupNote:
+    """The network details, for a few seconds once a display has an address."""
+
+    def reach(self, interface="wlan0"):
+        return address.Reach("megalink-a199", [(interface, "192.168.1.23")], 8080, "192.168.1.23")
+
+    def test_it_says_everything_in_one_line(self):
+        line = address.summary(self.reach(), wifi="RangeNet")
+        assert line == (
+            "megalink-a199 · 192.168.1.23 on Wi-Fi RangeNet · settings http://192.168.1.23:8080/"
+        )
+
+    def test_a_cable_is_called_a_cable(self):
+        assert "on a network cable" in address.summary(self.reach("eth0"))
+
+    def test_with_no_address_there_is_nothing_to_say(self):
+        assert address.summary(address.Reach("megalink-a199", [], 8080)) == ""
+
+    def test_it_shows_for_ten_seconds_from_the_first_address(self):
+        now = [0.0]
+        first = address.FirstAddress(clock=lambda: now[0])
+        none = address.Reach("megalink-a199", [], 8080)
+        now[0] = 20.0  # joining the Wi-Fi took twenty seconds
+        assert first.text(none) == ""
+        now[0] = 21.0
+        assert first.text(self.reach()).startswith("megalink-a199")
+        now[0] = 30.9
+        assert first.text(self.reach())
+        now[0] = 31.0
+        assert first.text(self.reach()) == ""
+        assert first.done
+
+    def test_once_only(self):
+        now = [0.0]
+        first = address.FirstAddress(clock=lambda: now[0])
+        first.text(self.reach())
+        now[0] = 11.0
+        first.text(self.reach())
+        now[0] = 500.0
+        assert first.text(self.reach()) == ""
+
+    def test_with_no_address_at_all_it_gives_up(self):
+        now = [0.0]
+        first = address.FirstAddress(clock=lambda: now[0])
+        none = address.Reach("megalink-a199", [], 8080)
+        now[0] = 181.0
+        assert first.text(none) == ""
+        assert first.done

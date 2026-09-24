@@ -464,3 +464,39 @@ class TestIdentifying:
         w, h, x, y = banner((1280, 720, 1920, 0))
         assert x - 1920 == 1280 - (x - 1920 + w)  # as much either side
         assert y == (720 - h) // 2
+
+
+class TestTheNetworkNote:
+    """Over the page, in a corner, once there is an address."""
+
+    def pane(self, config, reach):
+        spawned = []
+        pane = browser.BrowserDisplay(
+            FakeController(config),
+            spawn=lambda cmd: (spawned.append(FakeProcess(cmd)), spawned[-1])[1],
+            browser="/usr/bin/chromium",
+            read_network=lambda: {"mode": "client", "wifi": "RangeNet"},
+            find_reach=lambda port: reach,
+        )
+        return pane, spawned
+
+    def test_it_is_put_in_a_corner_once(self):
+        from megalink_viewer.address import Reach
+
+        reach = Reach("megalink-a199", [("wlan0", "192.168.1.23")], 8080, "192.168.1.23")
+        pane, spawned = self.pane(Config(host="stord-pk", range="1-10", lane="9"), reach)
+        pane.tick()
+        pane._reach_at = float("-inf")
+        pane.tick()
+        notes = [p.command for p in spawned if "--corner" in p.command]
+        assert len(notes) == 1
+        text = notes[0][notes[0].index("--text") + 1]
+        assert "192.168.1.23 on Wi-Fi RangeNet" in text
+
+    def test_not_over_the_setup_page(self):
+        from megalink_viewer.address import Reach
+
+        reach = Reach("megalink-a199", [("wlan0", "192.168.1.23")], 8080, "192.168.1.23")
+        pane, spawned = self.pane(Config(), reach)
+        pane.tick()
+        assert not [p for p in spawned if "--corner" in p.command]

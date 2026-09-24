@@ -28,8 +28,15 @@ WIDTH_SHARE = 0.7
 HEIGHT_SHARE = 0.28
 
 
-def command(text: str, seconds: float, geometry: str | None = None) -> list[str]:
-    """How to start one: ``geometry`` is the screen's, ``WxH+X+Y``, or all of it."""
+def command(
+    text: str, seconds: float, geometry: str | None = None, corner: bool = False
+) -> list[str]:
+    """How to start one: ``geometry`` is the screen's, ``WxH+X+Y``, or all of it.
+
+    ``corner`` makes it a quiet note in the bottom corner rather than a banner
+    across the middle: the network details at startup, over a page someone may
+    be reading.
+    """
     args = [
         sys.executable,
         "-m",
@@ -42,6 +49,8 @@ def command(text: str, seconds: float, geometry: str | None = None) -> list[str]
     ]
     if geometry:
         args += ["--geometry", geometry]
+    if corner:
+        args.append("--corner")
     return args
 
 
@@ -61,7 +70,9 @@ def parse_geometry(text: str) -> tuple[int, int, int, int] | None:
     return width, height, x, y
 
 
-def show(text: str, seconds: float, geometry: str | None = None) -> None:  # pragma: no cover
+def show(  # pragma: no cover - needs an X server
+    text: str, seconds: float, geometry: str | None = None, corner: bool = False
+) -> None:
     """Flash ``text`` for ``seconds``. Needs an X server; blocks until done."""
     import tkinter as tk
     from tkinter import font as tkfont
@@ -76,6 +87,9 @@ def show(text: str, seconds: float, geometry: str | None = None) -> None:  # pra
         0,
         0,
     )
+    if corner:
+        _corner(root, text, screen, seconds)
+        return
     w, h, x, y = banner(screen)
     root.geometry(f"{w}x{h}+{x}+{y}")
     face = tkfont.Font(root=root, family="DejaVu Sans", size=-int(h * 0.42), weight="bold")
@@ -94,5 +108,32 @@ def show(text: str, seconds: float, geometry: str | None = None) -> None:  # pra
         root.after(500, blink)
 
     root.after(500, blink)
+    root.after(int(max(1.0, seconds) * 1000), root.destroy)
+    root.mainloop()
+
+
+def _corner(root: Any, text: str, screen: tuple[int, int, int, int], seconds: float) -> None:
+    """A small note in the bottom-left corner of the screen, for ``seconds``."""
+    import tkinter as tk
+    from tkinter import font as tkfont
+
+    _width, height, x, y = screen
+    face = tkfont.Font(root=root, family="DejaVu Sans", size=-max(14, height // 45))
+    label = tk.Label(
+        root,
+        text=text,
+        font=face,
+        bg=DARK,
+        fg="#f2f2f2",
+        padx=12,
+        pady=6,
+        highlightthickness=2,
+        highlightbackground=ACCENT,
+    )
+    label.pack()
+    root.update_idletasks()
+    w, h = label.winfo_reqwidth(), label.winfo_reqheight()
+    margin = max(8, height // 90)
+    root.geometry(f"{w}x{h}+{x + margin}+{y + height - h - margin}")
     root.after(int(max(1.0, seconds) * 1000), root.destroy)
     root.mainloop()

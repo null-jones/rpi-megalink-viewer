@@ -903,6 +903,21 @@ class LaneWindow:
             padx=16,
             pady=8,
         )
+        # The network details, in a corner for the first seconds after the
+        # display has an address: the name, the address, the Wi-Fi, and where
+        # its settings are -- what a range wants to read off a new display.
+        self._netinfo = tk.Label(
+            root,
+            text="",
+            bg="#0d1b24",
+            fg=CHROME_TEXT,
+            font=self._fonts["subtitle"],
+            padx=12,
+            pady=6,
+            highlightthickness=2,
+            highlightbackground=ACCENT,
+        )
+        self._first_address = reach_module.FirstAddress()
 
     def _build_header(self, tk: Any) -> None:
         """Range and shooter on the left, club in the middle, lane on the right."""
@@ -1302,8 +1317,10 @@ class LaneWindow:
         self._fill_status()
         # Set-up covers everything, idle included: a display with no club or
         # firing point has no position to be idle on.
-        if not self._show_setup():
+        setting_up = self._show_setup()
+        if not setting_up:
             self._show_idle(view)
+        self._show_network(setting_up)
         self._show_identify()
 
     def _fill_clock(self, result: LaneResult | None) -> None:
@@ -1661,6 +1678,25 @@ class LaneWindow:
                             outline="",
                         )
             self._codes_drawn[key] = (text, side)
+
+    def _show_network(self, setting_up: bool) -> None:
+        """The network details in a corner, for a few seconds once there is an address.
+
+        Not over the set-up screen, which says all of it already, in full.
+        """
+        if self._first_address.done:
+            # Shown once; no more looking up the address for it.
+            self._netinfo.place_forget()
+            return
+        reach = self._current_reach()
+        wifi = str((self._network or {}).get("wifi") or "")
+        line = "" if setting_up else self._first_address.text(reach, wifi)
+        if not line:
+            self._netinfo.place_forget()
+            return
+        self._netinfo.configure(text=line)
+        self._netinfo.place(relx=0.012, rely=0.985, anchor="sw")
+        self._netinfo.lift()
 
     def _show_identify(self) -> None:
         """Flash the display's name when it has been asked to identify itself."""
