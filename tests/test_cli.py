@@ -348,6 +348,37 @@ class TestTwoScreens:
     getting two screens is expected to say why.
     """
 
+    def test_switching_the_second_screen_on_restarts_the_display(self):
+        from megalink_viewer.cli import restart_reason
+        from megalink_viewer.config import Config
+
+        config = Config()
+        config.display.lane2 = "10"
+        assert restart_reason(config, "gui", startup_two=False) == "second screen switched on"
+
+    def test_and_off(self):
+        from megalink_viewer.cli import restart_reason
+        from megalink_viewer.config import Config
+
+        assert restart_reason(Config(), "gui", startup_two=True) == "second screen switched off"
+
+    def test_changing_what_it_shows_does_not(self):
+        # The second window follows its setting as the first does.
+        from megalink_viewer.cli import restart_reason
+        from megalink_viewer.config import Config
+
+        config = Config()
+        config.display.lane2 = "11"
+        assert restart_reason(config, "gui", startup_two=True) == ""
+
+    def test_a_change_of_mode_still_does(self):
+        from megalink_viewer.cli import restart_reason
+        from megalink_viewer.config import Config
+
+        config = Config()
+        config.display.mode = "terminal"
+        assert restart_reason(config, "gui", startup_two=False) == "mode changed to terminal"
+
     PAIR = (
         Screen("HDMI-1", 1920, 1080, 0, 0),
         Screen("HDMI-2", 1920, 1080, 1920, 0),

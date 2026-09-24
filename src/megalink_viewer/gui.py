@@ -609,6 +609,9 @@ class LaneWindow:
         self._reach_at = float("-inf")
         #: What the hotspot fallback says it is doing, read from its status file.
         self._read_network = read_network or network.read_status
+        #: "screen 1" or "screen 2" on a Pi showing a firing point on each of
+        #: its HDMI outputs, said when the display is asked to identify itself.
+        self.screen_label = ""
         self._network: dict[str, Any] | None = None
         self._codes_drawn: dict[str, tuple[str, int]] = {}
         self._last_size = (0, 0)
@@ -1655,10 +1658,12 @@ class LaneWindow:
             self._identify.place_forget()
             return
         name = getattr(getattr(self._state, "config", None), "name", "") or "this display"
+        # Which screen, on a Pi with two: that is the question being asked.
+        label = f"{name} · {self.screen_label}" if self.screen_label else name
         # Blink, so it catches the eye from down the line.
         on = int(time.time() * 2) % 2 == 0
         self._identify.configure(
-            text=f"▶ {name}", bg=ACCENT if on else "#0d1b24", fg="#0d1b24" if on else ACCENT
+            text=f"▶ {label}", bg=ACCENT if on else "#0d1b24", fg="#0d1b24" if on else ACCENT
         )
         self._identify.place(relx=0.5, rely=0.5, anchor="center")
         self._identify.lift()

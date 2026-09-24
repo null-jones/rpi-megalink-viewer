@@ -189,6 +189,19 @@ class TestIdentify:
         assert controller.identifying()
 
 
+class TestScreensInTheStatus:
+    def test_the_screens_plugged_in_are_reported(self, config_path, fake_client):
+        # For the settings page to offer a second screen only where there is one.
+        controller = Controller(path=config_path, client=fake_client)
+        controller.screens = ["HDMI-1", "HDMI-2"]
+        status = controller.status()
+        assert status["screens"] == ["HDMI-1", "HDMI-2"]
+        assert status["lane2"] == ""
+
+    def test_none_known_is_none(self, config_path, fake_client):
+        assert Controller(path=config_path, client=fake_client).status()["screens"] == []
+
+
 class TestTerminalRendering:
     def test_it_renders_the_configured_lane(self, config_path, fake_client):
         from megalink_viewer.controller import run_terminal

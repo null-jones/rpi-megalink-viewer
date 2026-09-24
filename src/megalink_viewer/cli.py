@@ -283,6 +283,20 @@ def two_screens(
     return found[0], found[1]
 
 
+def restart_reason(config: Any, startup_mode: str, startup_two: bool) -> str:
+    """Why the display must start again to apply a setting, or empty if not.
+
+    The way the scores are shown, and whether there is a second screen, are
+    both fixed when the display starts: the launcher picks the mode, and the
+    screens are laid out and the windows made once.
+    """
+    if config.display.mode != startup_mode:
+        return f"mode changed to {config.display.mode}"
+    if bool(config.display.lane2.strip()) != startup_two:
+        return "second screen switched " + ("off" if startup_two else "on")
+    return ""
+
+
 def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
     """Run the display this machine is configured to be.
 
@@ -367,15 +381,17 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
     # is what makes "switch that Pi to console mode" work from the dashboard on
     # a display whose X server is broken.
     startup_mode = config.display.mode
+    # The same for a second screen switched on or off: the screens are laid out
+    # and the windows made once, at the start. Changing which firing point the
+    # second screen shows needs no restart; the window follows the setting.
+    startup_two = bool(config.display.lane2.strip())
 
     def should_stop() -> bool:
         if stopping():
             return True
-        if controller.config.display.mode != startup_mode:
-            print(
-                f"mode changed to {controller.config.display.mode}; restarting",
-                file=sys.stderr,
-            )
+        reason = restart_reason(controller.config, startup_mode, startup_two)
+        if reason:
+            print(f"{reason}; restarting", file=sys.stderr)
             return True
         return False
 
@@ -416,6 +432,14 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             )
             print(_why_stopped(stopping, "the display loop ended"), file=sys.stderr)
             return 0
+
+        from . import outputs
+
+        # What is plugged in, for the settings page to offer a second screen.
+        controller.screens = [screen.name for screen in outputs.connected()]
+        if startup_two:
+            # X starts both outputs mirrored; two firing points need them apart.
+            print(f"megalink: {outputs.arrange()}", file=sys.stderr)
 
         if startup_mode == "browser":
             from .browser import BrowserDisplay, find_browser, run_panes
@@ -495,6 +519,7 @@ def cmd_display(args: argparse.Namespace, client: MegalinkClient) -> int:
             )
             window.place_on(pair[0])
             second.place_on(pair[1])
+            window.screen_label, second.screen_label = "screen 1", "screen 2"
             print(
                 f"two screens: {pair[0].name} showing lane {window.lane}, "
                 f"{pair[1].name} showing lane {second.lane}",

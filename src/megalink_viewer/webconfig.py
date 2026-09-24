@@ -583,7 +583,10 @@ dt{color:var(--muted)}dd{margin:0;text-align:right}
 <section><h2>What to display</h2>
 <label><span>Club</span><select id="host"></select></label>
 <label><span>Range</span><select id="range"></select></label>
-<label><span>Firing point</span><select id="lane"></select></label>
+<label><span id="lanelabel">Firing point</span><select id="lane"></select></label>
+<label id="lane2row" hidden><span>Firing point on screen 2 (HDMI 1)</span>
+<select id="lane2"></select></label>
+<div class="note" id="screensnote" hidden></div>
 <button id="save">Save</button>
 <button class="ghost" id="identify">Identify this screen</button>
 <div class="note" id="note"></div>
@@ -622,8 +625,6 @@ margin:.2rem 0 .8rem;background:#111;border:1px solid var(--line);border-radius:
 <option value="browser">Web browser</option></select></label>
 <label><span>Redraw (s)</span><input id="interval" type="number" step="0.1" min="0.1" max="60"></label>
 </div>
-<label><span>Second screen</span>
-<input id="lane2" placeholder="firing point for the second HDMI (optional)"></label>
 <label id="urlrow" hidden><span>Address</span>
 <input id="url" placeholder="leave empty for Megalink's own page"></label>
 <div class="note" id="modenote"></div>
@@ -754,6 +755,27 @@ async function loadLanes() {
   } catch (e) { say(e.message, "err"); }
   if (!lanes.length) lanes = cfg.lane ? [cfg.lane] : [];
   fill($("lane"), lanes.map(l => ({value: l, label: l})), cfg.lane);
+  // The second screen picks from the same firing points, or shows what the
+  // first one does.
+  const lane2 = cfg.display.lane2 || "";
+  const second = lanes.includes(lane2) || !lane2 ? lanes : [...lanes, lane2];
+  fill($("lane2"), [{value: "", label: "Same as screen 1"},
+                    ...second.map(l => ({value: l, label: l}))], lane2);
+}
+
+// A Pi 4 or Pi 5 with two screens plugged in can show a firing point on each.
+// Offered only when there are two, or when one was set up before and its
+// screen has since been unplugged -- so it can be taken away again.
+function showScreens(screens) {
+  const two = screens.length >= 2, set = !!(cfg.display.lane2 || "");
+  $("lane2row").hidden = !(two || set);
+  $("lanelabel").textContent = two || set ? "Firing point on screen 1 (HDMI 0)" : "Firing point";
+  const note = $("screensnote");
+  note.hidden = !(two || set);
+  note.textContent = two
+    ? "Screen 1 is the one plugged into HDMI 0, the socket next to the power. " +
+      "Identify this screen shows which is which."
+    : "Only one screen is plugged in now, so the second firing point is not shown.";
 }
 
 async function refresh() {
@@ -785,12 +807,23 @@ async function save(patch, button) {
 
 $("host").onchange = loadRanges;
 $("range").onchange = loadLanes;
-$("save").onclick = () => save({host: $("host").value, range: $("range").value, lane: $("lane").value}, $("save"));
+$("save").onclick = async () => {
+  const patch = {host: $("host").value, range: $("range").value, lane: $("lane").value};
+  const before = cfg.display.lane2 || "";
+  if (!$("lane2row").hidden) patch.display = {lane2: $("lane2").value};
+  await save(patch, $("save"));
+  // Switching the second screen on or off restarts the display, to lay the
+  // screens out again; changing what it shows does not.
+  const after = cfg.display.lane2 || "";
+  if (!before !== !after) {
+    say("saved: the display restarts now to " +
+        (after ? "use both screens" : "show the same on both screens"), "ok");
+  }
+};
 $("save2").onclick = () => save({
   beacon: {name: $("dname").value},
   display: {
     mode: $("mode").value,
-    lane2: $("lane2").value.trim(),
     url: $("url").value.trim(),
     interval: parseFloat($("interval").value) || 0.5,
     idle_text: $("idle").value,
@@ -853,7 +886,7 @@ $("identify").onclick = async () => {
   $("dname").value = cfg.beacon.name || "";
   $("mode").value = cfg.display.mode;
   $("url").value = cfg.display.url || "";
-  $("lane2").value = cfg.display.lane2 || "";
+  api("/api/status").then(s => showScreens(s.screens || [])).catch(() => {});
   showMode();
   $("interval").value = cfg.display.interval;
   $("idle").value = cfg.display.idle_text || "";

@@ -127,6 +127,126 @@ def _run_xrandr() -> str:  # pragma: no cover - needs an X server
     return result.stdout if result.returncode == 0 else ""
 
 
+# -- laying the outputs out ----------------------------------------------------
+
+#: ``NAME connected [primary] [WIDTHxHEIGHT+X+Y] ...`` in ``xrandr --query``.
+#: An output that is plugged in but has no mode set has no geometry.
+_OUTPUT = re.compile(
+    r"^(?P<name>\S+) connected(?: primary)?"
+    r"(?: (?P<width>\d+)x(?P<height>\d+)(?P<x>[-+]\d+)(?P<y>[-+]\d+))?"
+)
+
+
+def _socket_order(name: str) -> tuple[Any, ...]:
+    """HDMI-1 before HDMI-2 before HDMI-10: numbers compared as numbers."""
+    return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name))
+
+
+def parse_query(text: str) -> list[Screen]:
+    """The outputs with something plugged into them, from ``xrandr --query``.
+
+    In socket order rather than by position, because this is what decides the
+    positions. An output with nothing showing on it yet is 0x0 at the origin.
+    """
+    found = []
+    for line in (text or "").splitlines():
+        match = _OUTPUT.match(line)
+        if match is None:
+            continue
+        found.append(
+            Screen(
+                name=match["name"],
+                width=int(match["width"] or 0),
+                height=int(match["height"] or 0),
+                x=int(match["x"] or 0),
+                y=int(match["y"] or 0),
+                primary=" connected primary" in line,
+            )
+        )
+    found.sort(key=lambda screen: _socket_order(screen.name))
+    return found
+
+
+def _overlap(a: Screen, b: Screen) -> bool:
+    """Whether two outputs show some of the same part of the X screen."""
+    if not (a.width and a.height and b.width and b.height):
+        return True  # not showing anything yet: it will need placing
+    return (
+        a.x < b.x + b.width
+        and b.x < a.x + a.width
+        and a.y < b.y + b.height
+        and b.y < a.y + a.height
+    )
+
+
+def side_by_side(connected: list[Screen]) -> list[str] | None:
+    """The ``xrandr`` command that puts the first two outputs side by side.
+
+    ``None`` when there is nothing to do: fewer than two plugged in, or two
+    already apart. With no configuration, X starts every output at the same
+    place -- mirrored -- and the Lite image has none of the desktop's tools for
+    arranging them, so both firing points' windows landed in the same place and
+    both screens showed the same thing. The first socket goes on the left: on a
+    Pi 4 and a Pi 5 that is HDMI 0, the one next to the power.
+    """
+    if len(connected) < 2:
+        return None
+    left, right = connected[0], connected[1]
+    if not _overlap(left, right):
+        return None
+    return [
+        "xrandr",
+        "--output",
+        left.name,
+        "--auto",
+        "--pos",
+        "0x0",
+        "--output",
+        right.name,
+        "--auto",
+        "--right-of",
+        left.name,
+    ]
+
+
+def connected(run: Callable[..., Any] | None = None) -> list[Screen]:
+    """The outputs with something plugged in, or an empty list if we cannot tell."""
+    try:
+        return parse_query((run or _run_query)() or "")
+    except Exception:
+        return []
+
+
+def arrange(
+    run_query: Callable[[], str] | None = None,
+    run: Callable[[list[str]], bool] | None = None,
+) -> str:
+    """Put two screens side by side if they are not already. A line for the log."""
+    found = connected(run_query)
+    command = side_by_side(found)
+    if command is None:
+        if len(found) < 2:
+            return f"{len(found)} screen(s) plugged in; nothing to arrange"
+        return f"{found[0].name} and {found[1].name} are already side by side"
+    ok = (run or _run_command)(command)
+    placed = f"{found[0].name} on the left, {found[1].name} on the right"
+    return placed if ok else f"could not arrange the screens ({' '.join(command)} failed)"
+
+
+def _run_query() -> str:  # pragma: no cover - needs an X server
+    result = subprocess.run(
+        ["xrandr", "--query"], capture_output=True, text=True, timeout=10, check=False
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _run_command(command: list[str]) -> bool:  # pragma: no cover - needs an X server
+    try:
+        return subprocess.run(command, capture_output=True, timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def describe(found: list[Screen]) -> str:
     """A line for the journal saying what was found."""
     if not found:

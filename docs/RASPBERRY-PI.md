@@ -676,25 +676,42 @@ documented above.
 
 ## Two HDMI outputs on a Pi 4 or Pi 5
 
-Both boards have two micro-HDMI sockets. Raspberry Pi OS joins them into a
-single X screen side by side, so showing a different firing point on each is a
-matter of putting each window on the right part of that screen.
+Both boards have two micro-HDMI sockets. Set the second firing point on the
+settings page: with two screens plugged in, *What to display* has a firing point
+for each, and screen 2 can also be *Same as screen 1*. Or:
 
 ```bash
 megalink config --lane 9 --lane2 10
 ```
 
-`xrandr --listmonitors` is what says where each output starts:
+**Screen 1 is HDMI 0, the socket next to the power**, on a Pi 4 and a Pi 5 alike;
+screen 2 is HDMI 1. *Identify this screen* shows "screen 1" and "screen 2" on
+them. Swapping the cables swaps the firing points.
+
+**The screens have to be laid out first.** With no configuration, X starts every
+output at the same place, so the two screens mirror each other. The Desktop
+images have their own tools that lay them out; a Lite image has none. On the
+first image both firing points' windows landed in the same place, and both
+screens showed the same thing. So when a second firing point is set, the display
+runs `xrandr --output HDMI-1 --auto --pos 0x0 --output HDMI-2 --auto --right-of
+HDMI-1` before it opens its windows, and says so in the journal. With no second
+firing point it leaves them mirrored, which shows the one firing point on both.
+
+Switching the second screen on or off restarts the display, which takes a few
+seconds, because the screens are laid out and the windows made when it starts.
+Changing which firing point screen 2 shows does not.
+
+`xrandr --listmonitors` then says where each output is, and each window is put
+on its own:
 
 ```
 Monitors: 2
  0: +*HDMI-1 1920/530x1080/300+0+0  HDMI-1
- 1: +HDMI-2 1920/530x1080/300+1920+0  HDMI-2
+ 1: +HDMI-2 1280/344x720/194+1920+0  HDMI-2
 ```
 
-The screens are ordered **left to right by position**, not in the order xrandr
-happens to list them, so "the first screen" means the one on the left of the
-bench and keeps meaning that when somebody swaps the cables over.
+The two screens needn't match. Each window is laid out for its own screen, so a
+720p screen beside a 1080p one gets everything at two-thirds the size.
 
 **The windows are placed directly, not by the window manager.** matchbox makes a
 window fill the whole X screen, and across two sockets that is *both* monitors:
@@ -715,11 +732,10 @@ If `lane2` is set but only one screen is attached, the display says so in the
 journal and shows one firing point. A Pi Zero has one socket, so the setting is
 harmless there.
 
-**Not yet verified on hardware.** The parsing, the placement and the two-window
-lifecycle are covered by tests, but no Pi 4 or Pi 5 has run this yet. The first
-thing to check is that both windows land on their own monitor rather than
-stacking on one, and `xrandr --listmonitors` on the machine itself is the place
-to start if they do not.
+**Checked on hardware:** the first try, on a Pi flashed from the image, showed
+both screens mirrored, which is what led to laying them out. Laying them out,
+and the settings page, are covered by tests and were tried on a two-monitor
+virtual screen. They have not been on a Pi with two screens again yet.
 
 ---
 

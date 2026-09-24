@@ -109,13 +109,17 @@ when the screen stays black, which on a Lite image it will, once.
 A **Raspberry Pi 4 Model B** and a **Pi 5** each have two HDMI sockets, and a
 range often wants two positions covered by one box rather than two:
 
+Plug in both screens and open the settings page. With two screens plugged in,
+*What to display* has a firing point for each: screen 1 is the one in **HDMI 0**,
+the socket next to the power, and screen 2 is the one in **HDMI 1**. *Identify
+this screen* puts "screen 1" and "screen 2" on them, if in doubt. Leave screen 2
+on *Same as screen 1* and both show the same firing point.
+
+Or from a laptop:
+
 ```bash
 make push PI=pi@bench-3 HOST=stord-pk RANGE=1-10 LANE=9 LANE2=10 MODE=gui
 ```
-
-Lane 9 goes on the left-hand screen, lane 10 on the right — "left" and "right"
-meaning where they actually sit, not which socket they are plugged into, since
-the outputs are ordered by position rather than by name.
 
 It stays **one process**: one feed, one configuration page, one beacon, one entry
 in the fleet dashboard. The second screen is a second window sharing the first

@@ -42,6 +42,9 @@ class Controller:
         self.client = client or MegalinkClient()
         self._poll_seconds = poll_seconds
         self._lock = threading.Lock()
+        #: The outputs with a screen plugged in, when the display knows: set by
+        #: the display at the start, for the settings page.
+        self.screens: list[str] = []
         self._watcher: RangeWatcher | None = None
         self._state: RangeState | None = None
         self._source: Source | None = None
@@ -226,6 +229,8 @@ class Controller:
             "host": config.host,
             "range": source.range_key if source is not None else config.range,
             "lane": config.lane,
+            "lane2": config.display.lane2,
+            "screens": list(self.screens),
             "protocol": source.protocol if source is not None else None,
             "connected": state is not None and state.connected,
             "age": self.age(),

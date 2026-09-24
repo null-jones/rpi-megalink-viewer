@@ -85,3 +85,122 @@ class TestAsking:
 
     def test_it_says_when_it_found_nothing(self):
         assert describe([]) == "no screens reported by xrandr"
+
+
+# ``xrandr --query`` on a Pi 4 just after X has started with no configuration:
+# both outputs at the origin, showing the same thing.
+QUERY_MIRRORED = """\
+Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 7680 x 7680
+HDMI-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 527mm x 296mm
+   1920x1080     60.00*+  50.00    59.94
+   1280x720      60.00    50.00    59.94
+HDMI-2 connected 1280x720+0+0 (normal left inverted right x axis y axis) 344mm x 194mm
+   1280x720      60.00*+
+   1024x768      60.00
+"""
+
+QUERY_APART = """\
+Screen 0: minimum 320 x 200, current 3200 x 1080, maximum 7680 x 7680
+HDMI-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 527mm x 296mm
+   1920x1080     60.00*+
+HDMI-2 connected 1280x720+1920+0 (normal left inverted right x axis y axis) 344mm x 194mm
+   1280x720      60.00*+
+"""
+
+QUERY_ONE = """\
+Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 7680 x 7680
+HDMI-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 527mm x 296mm
+   1920x1080     60.00*+
+HDMI-2 disconnected (normal left inverted right x axis y axis)
+"""
+
+
+class TestLayingOut:
+    """Two screens have to be put side by side before two windows can be."""
+
+    def test_only_outputs_with_a_screen_count(self):
+        from megalink_viewer.outputs import parse_query
+
+        assert [s.name for s in parse_query(QUERY_ONE)] == ["HDMI-1"]
+
+    def test_the_outputs_are_read_with_where_they_are(self):
+        from megalink_viewer.outputs import parse_query
+
+        found = parse_query(QUERY_MIRRORED)
+        assert [(s.name, s.geometry) for s in found] == [
+            ("HDMI-1", "1920x1080+0+0"),
+            ("HDMI-2", "1280x720+0+0"),
+        ]
+
+    def test_in_socket_order_whatever_order_xrandr_says(self):
+        from megalink_viewer.outputs import parse_query
+
+        text = "HDMI-2 connected 1280x720+0+0 (x)\nHDMI-1 connected 1920x1080+0+0 (x)\n"
+        assert [s.name for s in parse_query(text)] == ["HDMI-1", "HDMI-2"]
+
+    def test_an_output_with_nothing_showing_yet_is_still_plugged_in(self):
+        from megalink_viewer.outputs import parse_query
+
+        (screen,) = parse_query("HDMI-2 connected (normal left inverted right)\n")
+        assert (screen.name, screen.width) == ("HDMI-2", 0)
+
+    def test_mirrored_screens_are_put_side_by_side(self):
+        # What X does with no configuration, and why both screens showed the
+        # same firing point on the first image.
+        from megalink_viewer.outputs import parse_query, side_by_side
+
+        assert side_by_side(parse_query(QUERY_MIRRORED)) == [
+            "xrandr",
+            "--output",
+            "HDMI-1",
+            "--auto",
+            "--pos",
+            "0x0",
+            "--output",
+            "HDMI-2",
+            "--auto",
+            "--right-of",
+            "HDMI-1",
+        ]
+
+    def test_screens_already_apart_are_left_alone(self):
+        from megalink_viewer.outputs import parse_query, side_by_side
+
+        assert side_by_side(parse_query(QUERY_APART)) is None
+
+    def test_one_screen_needs_nothing(self):
+        from megalink_viewer.outputs import parse_query, side_by_side
+
+        assert side_by_side(parse_query(QUERY_ONE)) is None
+
+    def test_arranging_runs_the_command_and_says_so(self):
+        from megalink_viewer.outputs import arrange
+
+        ran = []
+        said = arrange(
+            run_query=lambda: QUERY_MIRRORED, run=lambda command: ran.append(command) or True
+        )
+        assert ran and ran[0][0] == "xrandr"
+        assert said == "HDMI-1 on the left, HDMI-2 on the right"
+
+    def test_a_failure_is_said_too(self):
+        from megalink_viewer.outputs import arrange
+
+        said = arrange(run_query=lambda: QUERY_MIRRORED, run=lambda command: False)
+        assert said.startswith("could not arrange the screens")
+
+    def test_nothing_to_do_runs_nothing(self):
+        from megalink_viewer.outputs import arrange
+
+        ran = []
+        assert "already side by side" in arrange(run_query=lambda: QUERY_APART, run=ran.append)
+        assert "1 screen(s)" in arrange(run_query=lambda: QUERY_ONE, run=ran.append)
+        assert ran == []
+
+    def test_no_xrandr_is_no_screens(self):
+        from megalink_viewer.outputs import connected
+
+        def explode():
+            raise FileNotFoundError("xrandr")
+
+        assert connected(explode) == []

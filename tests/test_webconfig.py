@@ -51,6 +51,41 @@ def expect_error(server, path, method="GET", payload=None, token=None):
     raise AssertionError("expected an error response")
 
 
+class TestTheSecondScreen:
+    """A Pi 4 or 5 with two screens picks each one's firing point the same way."""
+
+    def page(self, server):
+        url = f"http://127.0.0.1:{server.port}/"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.read().decode()
+
+    def test_it_is_chosen_beside_the_first_from_the_same_list(self, display):
+        _controller, server, _path = display
+        body = self.page(server)
+        showing = body.index("<h2>What to display</h2>")
+        assert showing < body.index('<select id="lane2">') < body.index("<h2>This screen</h2>")
+        # Not typed into a box at the bottom of the page any more.
+        assert '<input id="lane2"' not in body
+        assert "Same as screen 1" in body
+
+    def test_the_page_is_told_which_screens_are_plugged_in(self, display):
+        controller, server, _path = display
+        controller.screens = ["HDMI-1", "HDMI-2"]
+        _status, body = request(server, "/api/status")
+        assert body["screens"] == ["HDMI-1", "HDMI-2"]
+
+    def test_it_is_saved_with_the_first(self, display):
+        controller, server, _path = display
+        request(
+            server,
+            "/api/config",
+            "PUT",
+            {"host": "stord-pk", "range": "1-10", "lane": "9", "display": {"lane2": "10"}},
+        )
+        assert controller.config.lane == "9"
+        assert controller.config.display.lane2 == "10"
+
+
 class TestStatus:
     def test_healthz(self, display):
         _controller, server, _path = display

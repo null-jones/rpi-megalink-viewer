@@ -1120,6 +1120,32 @@ class TestTwoScreens:
             second.close()
             first.close()
 
+    def test_asked_to_identify_each_screen_says_which_it_is(self, gui, root, v2_state):
+        # "Which screen is screen 2?" is the question, on a Pi with two.
+        v2_state.identifying = lambda: True
+        first = gui.LaneWindow(v2_state, "9", interval_ms=10_000)
+        first.root.withdraw()
+        second = gui.LaneWindow(v2_state, "3", interval_ms=10_000, parent=first.root)
+        try:
+            first.screen_label, second.screen_label = "screen 1", "screen 2"
+            first.refresh(poll=False)
+            second.refresh(poll=False)
+            assert first._identify.cget("text").endswith("· screen 1")
+            assert second._identify.cget("text").endswith("· screen 2")
+        finally:
+            second.close()
+            first.close()
+
+    def test_with_one_screen_it_only_gives_the_name(self, gui, root, v2_state):
+        v2_state.identifying = lambda: True
+        win = gui.LaneWindow(v2_state, "9", interval_ms=10_000)
+        try:
+            win.root.withdraw()
+            win.refresh(poll=False)
+            assert "screen" not in win._identify.cget("text")
+        finally:
+            win.close()
+
 
 class TestLogoScale:
     """Tk scales by whole numbers, so filling a box means zoom-then-subsample."""
